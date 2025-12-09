@@ -101,16 +101,53 @@ class UserProfile:
     preferences: Dict[str, str]
     busy_schedule: Dict[str, Sequence[Tuple[str, str]]]
     preferred_locations: Optional[Sequence[str]] = None
+    # New TwinWork AI fields
+    languages: Sequence[str] = field(default_factory=list)
+    experience_years: int = 0
+    education_level: str = ""
+    study_commitments: Dict[str, Sequence[Tuple[str, str]]] = field(default_factory=dict)
+    health_limitations: Optional[str] = None
+    cv_data: Optional[Dict] = None
+    user_id: str = ""
+    # Computed fields
     busy_map: Dict[str, List[Tuple[int, int]]] = field(init=False)
+    study_map: Dict[str, List[Tuple[int, int]]] = field(init=False)
 
     def __post_init__(self) -> None:
         self.busy_map = build_busy_map(self.busy_schedule)
+        self.study_map = build_busy_map(self.study_commitments) if self.study_commitments else {}
         if self.preferred_locations is None:
             self.preferred_locations = []
+        if not self.languages:
+            self.languages = []
 
     @property
     def skill_set(self) -> set[str]:
         return {skill.lower() for skill in self.skills}
+    
+    @property
+    def combined_busy_map(self) -> Dict[str, List[Tuple[int, int]]]:
+        """Combine busy schedule and study commitments"""
+        combined = {day: list(blocks) for day, blocks in self.busy_map.items()}
+        for day, blocks in self.study_map.items():
+            if day in combined:
+                combined[day].extend(blocks)
+                combined[day].sort()
+            else:
+                combined[day] = list(blocks)
+        return combined
+    
+    @property
+    def available_hours_per_week(self) -> int:
+        """Calculate available hours after busy/study commitments"""
+        total_busy_minutes = 0
+        for day, blocks in self.combined_busy_map.items():
+            for start, end in blocks:
+                total_busy_minutes += (end - start)
+        # Assume 12 waking hours per day (720 min) * 7 days = 5040 min
+        available_minutes = 5040 - total_busy_minutes
+        return max(0, available_minutes // 60)
+
 
 @dataclass
 class MatchInsight:
@@ -123,6 +160,7 @@ class MatchResult:
     total_hours: int
     total_pay: float
     insights: Sequence[MatchInsight]
+    score: float = 0.0
 
 def summarize_job(job: Job) -> str:
     blocks = [f"{block.day} {format_time(block.start)}-{format_time(block.end)}" for block in job.schedule_blocks]

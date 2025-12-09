@@ -1,25 +1,44 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Azduna Job Assistant</title>
+    <title>TwinWork AI - Job Assistant</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
+
 <body>
     <div class="app-wrapper">
-        <div class="app-container">
+        <div class="chat-column">
             <header>
                 <div class="logo">
-                    <i class="fas fa-rocket"></i> Azduna Jobs
+                    <i class="fas fa-gem"></i> TwinWork AI
                 </div>
-                <div class="status-indicator online"></div>
+                <div class="header-actions">
+                    <button class="header-btn" onclick="toggleMarketInsights()">
+                        <i class="fas fa-chart-line"></i> Market Insights
+                    </button>
+                    <button class="header-btn" onclick="toggleCVUpload()">
+                        <i class="fas fa-file-upload"></i> Upload CV
+                    </button>
+                </div>
             </header>
-            
+
             <div class="chat-container" id="chat-container">
                 <!-- Messages will appear here -->
+                <div class="message ai-message">
+                    <div class="message-content">
+                        👋 Hi! I'm <strong>TwinWork AI</strong>. I can help you find 1 or 2 jobs that fit your schedule
+                        perfectly.<br><br>
+                        Let's start! What's your name?
+                    </div>
+                    <div class="message-time">Now</div>
+                </div>
             </div>
 
             <div class="input-area">
@@ -27,7 +46,7 @@
                 <div class="input-wrapper">
                     <input type="text" id="message-input" placeholder="Type your answer..." autocomplete="off">
                     <button id="send-btn">
-                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        <i class="fas fa-paper-plane"></i>
                     </button>
                 </div>
             </div>
@@ -37,17 +56,51 @@
         <div class="jobs-panel" id="jobs-panel">
             <div class="jobs-panel-header">
                 <h2><i class="fas fa-briefcase"></i> Job Offers</h2>
-                <button class="close-jobs-panel" onclick="toggleJobsPanel()">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="job-tabs">
+                    <button class="job-tab active" onclick="switchJobTab('single')">Single</button>
+                    <button class="job-tab" onclick="switchJobTab('pairs')">Pairs</button>
+                    <button class="job-tab" onclick="switchJobTab('schedule')">Schedule</button>
+                </div>
             </div>
-            
+
             <div class="jobs-panel-content" id="jobs-panel-content">
-                <!-- Single jobs will appear here -->
+                <div class="jobs-panel-empty">
+                    <i class="fas fa-search"></i>
+                    <p>No jobs found yet.</p>
+                    <span>Chat with me to find your perfect match!</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CV Upload Modal -->
+    <div id="cv-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-alt"></i> Upload Your CV</h3>
+                <span class="close-modal" onclick="toggleCVUpload()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <textarea id="cv-text" placeholder="Paste your CV text here..." rows="10"></textarea>
+                <button class="primary-btn" onclick="submitCV()">Analyze CV</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Market Insights Modal -->
+    <div id="market-modal" class="modal">
+        <div class="modal-content wide-modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-chart-bar"></i> Armenian Market Insights 🇦🇲</h3>
+                <span class="close-modal" onclick="toggleMarketInsights()">&times;</span>
+            </div>
+            <div class="modal-body" id="market-insights-content">
+                <div class="market-loading">Loading insights...</div>
             </div>
         </div>
     </div>
 
     <script src="/static/script.js"></script>
 </body>
+
 </html>

@@ -9,29 +9,43 @@ const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
 const ws = new WebSocket(wsUrl);
 
+// Global state for jobs to support filtering
+let currentSingleJobs = [];
+let currentPairJobs = [];
+let currentTab = 'single';
+
 ws.onopen = () => {
     console.log('Connected to chat server');
 };
 
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    
-    console.log('WebSocket message received:', data); // Debug log
-    
+
+    console.log('WebSocket message received:', data);
+
+    // Handle CV Analysis results specifically
+    if (data.type === 'cv_analysis') {
+        const skills = data.skills.join(', ');
+        // We handle the text message part separately, this just updates internal state if needed
+        // But mainly the server sends a text message after this JSON
+    }
+
     if (data.type === 'text' || data.type === 'choice') {
         addMessage(data.message, 'bot');
-        
+
         if (data.options && data.options.length > 0) {
             showOptions(data.options);
         } else {
             optionsContainer.innerHTML = ''; // Clear options if none
         }
     }
-    
-    // Handle job data in side panel - check for type === 'jobs' OR direct single_jobs property
+
+    // Handle job data in side panel
     if (data.type === 'jobs' || (data.single_jobs && data.single_jobs.length > 0)) {
-        console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs); // Debug log
-        displayJobsInPanel(data.single_jobs || [], data.pair_jobs || []);
+        console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
+        currentSingleJobs = data.single_jobs || [];
+        currentPairJobs = data.pair_jobs || [];
+        displayJobsInPanel(); // Refresh display with new data
     }
 };
 
@@ -39,58 +53,133 @@ ws.onclose = () => {
     addMessage('Connection lost. Please refresh the page.', 'bot');
 };
 
-function toggleJobsPanel() {
-    const panel = document.getElementById('jobs-panel');
-    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+// --- UI Toggle Functions ---
+
+function toggleCVUpload() {
+    const modal = document.getElementById('cv-modal');
+    modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
 }
 
-function displayJobsInPanel(singleJobs, pairJobs) {
+function toggleMarketInsights() {
+    const modal = document.getElementById('market-modal');
+    modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+
+    if (modal.style.display === 'block') {
+        // Mock loading content
+        const content = document.getElementById('market-insights-content');
+        content.innerHTML = '<div class="market-loading">Fetching latest market data...</div>';
+
+        // Simulating fetch
+        setTimeout(() => {
+            content.innerHTML = `
+                <div class="insight-card">
+                    <h4>🔥 Top Skills in Armenia</h4>
+                    <p>Python, React, Node.js, English (C1)</p>
+                </div>
+                <div class="insight-card">
+                    <h4>💰 Salary Trends (Junior/Mid)</h4>
+                    <p>Dev: 400k - 800k AMD/mo</p>
+                    <p>Service: 150k - 300k AMD/mo</p>
+                </div>
+            `;
+        }, 1500);
+    }
+}
+
+function submitCV() {
+    const cvText = document.getElementById('cv-text').value.trim();
+    if (!cvText) {
+        alert("Please paste your CV text first.");
+        return;
+    }
+
+    // Close modal
+    toggleCVUpload();
+
+    // Show user action
+    addMessage("📄 Uploading CV for analysis...", "user");
+
+    // Send to backend
+    ws.send(JSON.stringify({
+        type: "cv_upload",
+        text: cvText
+    }));
+
+    // Clear textarea
+    document.getElementById('cv-text').value = "";
+}
+
+function switchJobTab(tabName) {
+    currentTab = tabName;
+
+    // Update active state of buttons
+    document.querySelectorAll('.job-tab').forEach(btn => {
+        if (btn.textContent.toLowerCase() === tabName) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    displayJobsInPanel();
+}
+
+// --- Display Logic ---
+
+function displayJobsInPanel(singleJobs = currentSingleJobs, pairJobs = currentPairJobs) {
     jobsPanelContent.innerHTML = '';
-    
+
     if (singleJobs.length === 0 && pairJobs.length === 0) {
         jobsPanelContent.innerHTML = `
             <div class="jobs-panel-empty">
-                <i class="fas fa-briefcase"></i>
-                <p>No jobs found yet</p>
+                <i class="fas fa-search"></i>
+                <p>No jobs found yet.</p>
+                <span>Chat with me to find your perfect match!</span>
             </div>
         `;
         return;
     }
-    
-    // Add single jobs
-    if (singleJobs.length > 0) {
-        const singleHeader = document.createElement('div');
-        singleHeader.style.cssText = 'font-weight: 700; color: #667eea; margin-bottom: 12px; font-size: 1rem;';
-        singleHeader.textContent = '💼 Single Jobs';
-        jobsPanelContent.appendChild(singleHeader);
-        
-        singleJobs.forEach((job, index) => {
-            const card = createJobCardPanel(job, index + 1, 'single');
-            jobsPanelContent.appendChild(card);
-        });
+
+    // Filter based on currentTab
+    if (currentTab === 'single') {
+        if (singleJobs.length > 0) {
+            singleJobs.forEach((job, index) => {
+                const card = createJobCardPanel(job, index + 1, 'single');
+                jobsPanelContent.appendChild(card);
+            });
+        } else {
+            jobsPanelContent.innerHTML = '<div class="jobs-panel-empty"><p>No single jobs found.</p></div>';
+        }
     }
-    
-    // Add pair jobs
-    if (pairJobs.length > 0) {
-        const pairHeader = document.createElement('div');
-        pairHeader.style.cssText = 'font-weight: 700; color: #f59e0b; margin-top: 20px; margin-bottom: 12px; font-size: 1rem;';
-        pairHeader.textContent = '👥 Job Pairs';
-        jobsPanelContent.appendChild(pairHeader);
-        
-        pairJobs.forEach((pair, index) => {
-            const card = createJobPairCardPanel(pair, index + 1);
-            jobsPanelContent.appendChild(card);
-        });
+    else if (currentTab === 'pairs') {
+        if (pairJobs.length > 0) {
+            pairJobs.forEach((pair, index) => {
+                const card = createJobPairCardPanel(pair, index + 1);
+                jobsPanelContent.appendChild(card);
+            });
+        } else {
+            jobsPanelContent.innerHTML = '<div class="jobs-panel-empty"><p>No job pairs found.</p></div>';
+        }
+    }
+    else if (currentTab === 'schedule') {
+        // Placeholder for schedule view
+        jobsPanelContent.innerHTML = `
+            <div class="jobs-panel-empty">
+                <i class="fas fa-calendar-alt"></i>
+                <p>Schedule View</p>
+                <span>Visual timeline coming soon!</span>
+            </div>
+        `;
     }
 }
 
 function createJobCardPanel(job, number, type) {
     const card = document.createElement('div');
     card.className = `job-card ${type}`;
-    
+
     const rate = job.hourly_rate ? `$${job.hourly_rate.toFixed(0)}` : 'TBD';
     const weeklyIncome = job.weekly_pay ? `$${job.weekly_pay.toFixed(0)}` : 'TBD';
-    
+
     card.innerHTML = `
         <div class="job-card-header">
             <div class="job-card-title">${escapeHtml(job.title)}</div>
@@ -126,18 +215,18 @@ function createJobCardPanel(job, number, type) {
         </a>
         ` : ''}
     `;
-    
+
     return card;
 }
 
 function createJobPairCardPanel(pair, number) {
     const card = document.createElement('div');
     card.className = 'job-card pair';
-    
+
     const jobA = pair.jobs[0];
     const jobB = pair.jobs[1];
     const totalIncome = pair.total_pay ? `$${pair.total_pay.toFixed(0)}` : 'TBD';
-    
+
     card.innerHTML = `
         <div class="job-card-header">
             <div class="job-card-title">Job Pair ${number}</div>
@@ -178,11 +267,12 @@ function createJobPairCardPanel(pair, number) {
             ` : ''}
         </div>
     `;
-    
+
     return card;
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
@@ -191,112 +281,24 @@ function escapeHtml(text) {
 function addMessage(text, sender) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${sender}`;
-    
+
     // Convert newlines to <br> for bot messages
     if (sender === 'bot') {
-        msgDiv.innerHTML = text.replace(/\n/g, '<br>');
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.innerHTML = text.replace(/\n/g, '<br>');
+        msgDiv.appendChild(contentDiv);
+
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'message-time';
+        timeDiv.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        msgDiv.appendChild(timeDiv);
     } else {
         msgDiv.textContent = text;
     }
-    
+
     chatContainer.appendChild(msgDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-function addJobsDisplay(jobs) {
-    const container = document.createElement('div');
-    container.className = 'jobs-container';
-    
-    // Summary header
-    const summary = document.createElement('div');
-    summary.className = 'jobs-summary';
-    summary.innerHTML = `
-        <span class="summary-text">✨ Found ${jobs.length} amazing opportunities</span>
-        <span class="summary-count">${jobs.length}</span>
-    `;
-    container.appendChild(summary);
-    
-    // Job cards
-    jobs.forEach((job, index) => {
-        const card = createJobCard(job, index + 1);
-        container.appendChild(card);
-    });
-    
-    chatContainer.appendChild(container);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-function createJobCard(job, number) {
-    const card = document.createElement('div');
-    card.className = 'job-card ' + getJobCategory(job.title);
-    
-    // Get salary display
-    const salary = job.hourly_rate ? `$${job.hourly_rate.toFixed(0)}/hr` : 'Negotiable';
-    
-    // Get remote status
-    const isRemote = job.location.toLowerCase().includes('remote');
-    const remoteIcon = isRemote ? '🌍' : '📍';
-    
-    card.innerHTML = `
-        <div class="job-header">
-            <div class="job-title">${escapeHtml(job.title)}</div>
-            <div class="job-number">#${number}</div>
-        </div>
-        <div class="job-company">
-            <i class="fas fa-building"></i>
-            ${escapeHtml(job.company || 'Company')}
-        </div>
-        <div class="job-details">
-            <div class="detail-badge salary">
-                <i class="fas fa-dollar-sign"></i>
-                ${salary}
-            </div>
-            <div class="detail-badge location">
-                <i class="fas fa-map-marker-alt"></i>
-                ${escapeHtml(job.location)}
-            </div>
-            ${job.hours_per_week ? `
-            <div class="detail-badge hours">
-                <i class="fas fa-clock"></i>
-                ${job.hours_per_week}h/week
-            </div>
-            ` : ''}
-            ${isRemote ? `
-            <div class="detail-badge remote">
-                <i class="fas fa-laptop"></i>
-                Remote
-            </div>
-            ` : ''}
-        </div>
-        ${job.description ? `
-        <div class="job-description">
-            ${escapeHtml(job.description.substring(0, 150))}${job.description.length > 150 ? '...' : ''}
-        </div>
-        ` : ''}
-        <div class="job-footer">
-            <a href="${job.apply_link || '#'}" target="_blank" rel="noopener noreferrer" class="apply-btn">
-                <i class="fas fa-external-link-alt"></i> Apply Now
-            </a>
-        </div>
-    `;
-    
-    return card;
-}
-
-function getJobCategory(title) {
-    const titleLower = title.toLowerCase();
-    if (titleLower.includes('doctor') || titleLower.includes('physician') || titleLower.includes('surgeon')) return 'doctor';
-    if (titleLower.includes('engineer') || titleLower.includes('architect')) return 'engineer';
-    if (titleLower.includes('teacher') || titleLower.includes('instructor')) return 'teacher';
-    if (titleLower.includes('nurse') || titleLower.includes('healthcare')) return 'nurse';
-    if (titleLower.includes('developer') || titleLower.includes('programmer')) return 'developer';
-    return '';
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 function sendMessage() {
@@ -330,3 +332,15 @@ messageInput.addEventListener('keypress', (e) => {
         sendMessage();
     }
 });
+
+// Close modals when clicking outside
+window.onclick = function (event) {
+    const cvModal = document.getElementById('cv-modal');
+    const marketModal = document.getElementById('market-modal');
+    if (event.target == cvModal) {
+        cvModal.style.display = "none";
+    }
+    if (event.target == marketModal) {
+        marketModal.style.display = "none";
+    }
+}

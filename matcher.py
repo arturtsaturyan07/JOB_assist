@@ -97,19 +97,26 @@ class JobMatcher:
                 eligible.append((job, score_job(job, user), insights))
         eligible.sort(key=lambda entry: entry[1], reverse=True)
         results: List[MatchResult] = []
-        for job, _, insights in eligible[:limit]:
+        for job, score, insights in eligible[:limit]:
             results.append(
                 MatchResult(
                     jobs=[job],
                     total_hours=job.hours_per_week,
                     total_pay=job.weekly_pay,
                     insights=insights,
+                    score=score,
                 )
             )
         return results
 
     def match_job_pairs(self, user: UserProfile, limit: int = 3) -> List[MatchResult]:
-        eligible_jobs = [job for job in self.jobs if job_fits_user(job, user)[0]]
+        eligible_jobs = []
+        job_scores: Dict[str, float] = {}
+        for job in self.jobs:
+            fits, _ = job_fits_user(job, user)
+            if fits:
+                eligible_jobs.append(job)
+                job_scores[job.job_id] = score_job(job, user)
         combos: List[MatchResult] = []
         for job_a, job_b in combinations(eligible_jobs, 2):
             if jobs_overlap(job_a, job_b):
@@ -118,21 +125,25 @@ class JobMatcher:
             if total_hours > user.max_hours_per_week:
                 continue
             total_pay = job_a.weekly_pay + job_b.weekly_pay
-            
-            # Generate schedule insights
+            pair_score = job_scores[job_a.job_id] + job_scores[job_b.job_id]
             schedule_insights = self._get_pair_schedule_insights(job_a, job_b)
-            
-            # Determine pair type/complementarity
             pair_type = self._get_pair_type(job_a, job_b)
-            
             insights = [
                 MatchInsight("Pair Type", pair_type),
                 MatchInsight("Schedule Fit", schedule_insights),
                 MatchInsight("Combined Hours", f"{total_hours}h per week"),
                 MatchInsight("Income", f"Combined weekly income: {total_pay:.0f} AED"),
             ]
-            combos.append(MatchResult(jobs=[job_a, job_b], total_hours=total_hours, total_pay=total_pay, insights=insights))
-        combos.sort(key=lambda entry: entry.total_pay, reverse=True)
+            combos.append(
+                MatchResult(
+                    jobs=[job_a, job_b],
+                    total_hours=total_hours,
+                    total_pay=total_pay,
+                    insights=insights,
+                    score=pair_score,
+                )
+            )
+        combos.sort(key=lambda entry: entry.score, reverse=True)
         return combos[:limit]
     
     def _get_pair_type(self, job_a: Job, job_b: Job) -> str:
