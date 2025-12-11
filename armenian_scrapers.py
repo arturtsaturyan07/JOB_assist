@@ -58,9 +58,11 @@ class ArmenianJobScraper:
     
     # Request headers
     HEADERS = {
-        'User-Agent': 'TwinWork AI Job Assistant/1.0 (Educational Project; Contact: student@example.com)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5,hy;q=0.3,ru;q=0.2',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
     }
     
     # Request delay (seconds) - be respectful!
@@ -181,45 +183,89 @@ class ArmenianJobScraper:
             search_url += f"&location={quote_plus(location)}"
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            print(f"🌍 querying: {search_url}")
+            async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
                 response = await client.get(search_url, headers=self.HEADERS)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
+                print(f"✅ staff.am HTML size: {len(response.text)}")
                 
-                # Parse job listings
                 scraped = []
-                job_cards = soup.select('.job-card, .job-item, .jobs-list-item, [class*="job"]')[:limit]
+                # Strategy 1: Known classes
+                job_cards = soup.select('.job-card, .job-item, .jobs-list-item, .job-inner, [data-key]')
                 
-                for card in job_cards:
-                    try:
-                        title_elem = card.select_one('h2, h3, .job-title, [class*="title"]')
-                        company_elem = card.select_one('.company, .employer, [class*="company"]')
-                        location_elem = card.select_one('.location, [class*="location"]')
-                        link_elem = card.select_one('a[href*="/jobs/"]')
+                # Strategy 2: If no cards, look for any link structure resembling a job list
+                if not job_cards:
+                    print("⚠️ Standard selectors failed. Attempting link-based extraction...")
+                    # Find all links to job details
+                    job_links = soup.select('a[href*="/en/jobs/"], a[href*="/jobs/"]')
+                    seen_urls = set()
+                    
+                    for link in job_links:
+                        url = link.get('href')
+                        if not url or url in seen_urls: continue
                         
-                        if title_elem:
-                            scraped.append(ScrapedJob(
-                                title=title_elem.get_text(strip=True),
-                                company=company_elem.get_text(strip=True) if company_elem else "",
-                                location=location_elem.get_text(strip=True) if location_elem else "Yerevan",
-                                url=urljoin("https://staff.am", link_elem['href']) if link_elem else "",
-                                source="staff.am",
-                                description=""
-                            ))
-                    except Exception as e:
-                        continue
-                
-                # Convert to Job objects
+                        # Filter out non-job links (like categories if any)
+                        if '/categories/' in url: continue
+                        
+                        seen_urls.add(url)
+                        
+                        # Usually the link text is the job title
+                        title = link.get_text(strip=True)
+                        if len(title) < 3 or "View more" in title: continue
+                        
+                        # Try to find company near the link
+                        # This is heuristic: often company is in a sibling link or parent
+                        company = ""
+                        # Look for nearby company link
+                        company_link = link.find_next('a', href=re.compile(r'/company/'))
+                        if company_link:
+                            company = company_link.get_text(strip=True)
+                        
+                        full_url = urljoin("https://staff.am", url)
+                        
+                        scraped.append(ScrapedJob(
+                            title=title,
+                            company=company,
+                            location=location or "Yerevan",
+                            url=full_url,
+                            source="staff.am"
+                        ))
+                    
+                    # Limit early since headers might pick up duplicates
+                    scraped = scraped[:limit]
+
+                else:
+                    # Existing robust logic for cards
+                    for card in job_cards[:limit]:
+                        try:
+                            title_elem = card.select_one('h2, h3, .job-title, [class*="title"]')
+                            # Fallback: find the first link to a job
+                            if not title_elem:
+                                title_elem = card.select_one('a[href*="/jobs/"]')
+                                
+                            company_elem = card.select_one('.company, .employer, [class*="company"]')
+                            # Fallback: link to company
+                            if not company_elem:
+                                company_elem = card.select_one('a[href*="/company/"]')
+                                
+                            location_elem = card.select_one('.location, [class*="location"]')
+                            link_elem = card.select_one('a[href*="/jobs/"]')
+                            
+                            if title_elem and link_elem:
+                                scraped.append(ScrapedJob(
+                                    title=title_elem.get_text(strip=True),
+                                    company=company_elem.get_text(strip=True) if company_elem else "",
+                                    location=location_elem.get_text(strip=True) if location_elem else "Yerevan",
+                                    url=urljoin("https://staff.am", link_elem['href']),
+                                    source="staff.am"
+                                ))
+                        except Exception as e:
+                            continue
+
+                print(f"✅ Found {len(scraped)} raw jobs on staff.am")
                 jobs = await self._normalize_jobs(scraped)
-                
-                # Cache results
-                self.cache[cache_key] = {
-                    'timestamp': datetime.now().isoformat(),
-                    'jobs': [self._job_to_cache_dict(j) for j in jobs]
-                }
-                self._save_cache()
-                
                 return jobs
                 
         except Exception as e:

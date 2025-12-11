@@ -65,6 +65,7 @@ class Job:
     schedule_blocks: Sequence[TimeBlock]
     # Additional fields for real job data
     company: str = ""
+    job_source: str = "" # e.g. "jsearch", "adzuna", "staff.am"
     description: str = ""
     apply_link: str = ""
     posted_date: str = ""
