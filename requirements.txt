@@ -1,0 +1,45 @@
+# TwinWork AI - Requirements
+
+## Core Dependencies
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+websockets==12.0
+
+## Job Search APIs (Optional)
+rapidapi-sdk==1.0.0
+aiohttp==3.9.0
+
+## AI & NLP
+google-generativeai==0.3.0
+sentence-transformers==2.2.2
+numpy==1.24.0
+
+## Data Processing
+pandas==2.0.0
+pydantic==2.5.0
+
+## Web Scraping (Optional, for Armenian sites)
+beautifulsoup4==4.12.0
+requests==2.31.0
+lxml==4.9.0
+
+## Local LLMs (Optional but Recommended)
+
+
+## Database (Optional, for memory persistence)
+sqlalchemy==2.0.0
+sqlite3  # Built-in
+
+## Utilities
+python-dotenv==1.0.0
+pyyaml==6.0
+
+# Development
+pytest==7.4.0
+pytest-asyncio==0.21.0
+black==23.0.0
+flake8==6.0.0
+
+# Optional: PDF CV parsing
+pdfplumber==0.10.0  # For PDF CV extraction

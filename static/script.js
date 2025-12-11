@@ -93,16 +93,21 @@ function submitCV() {
         return;
     }
 
+    if (cvText.length < 50) {
+        alert("Please paste a longer CV (at least 50 characters).");
+        return;
+    }
+
     // Close modal
     toggleCVUpload();
 
     // Show user action
-    addMessage("📄 Uploading CV for analysis...", "user");
+    addMessage("📄 Uploaded CV", "user");
 
     // Send to backend
     ws.send(JSON.stringify({
         type: "cv_upload",
-        text: cvText
+        content: cvText
     }));
 
     // Clear textarea

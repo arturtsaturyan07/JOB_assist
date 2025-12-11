@@ -14,8 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from multi_model_service import MultiModelService, TaskType
-
+from llm_gateway import LLMGateway
 
 @dataclass
 class ParsedSchedule:
@@ -68,17 +67,15 @@ class ParsedJob:
         data['schedule'] = self.schedule.to_dict()
         return data
 
-
 class JobIntelligenceService:
     """
     Deep job analysis service using LLM + rule-based extraction.
-    
     Designed to extract maximum information from any job posting,
     including Armenian/Russian language posts.
     """
     
     def __init__(self):
-        self.llm = MultiModelService()
+        self.llm = LLMGateway()
         
         # Red flag keywords (multilingual)
         self.red_flags = {
@@ -238,14 +235,25 @@ class JobIntelligenceService:
         - Culture signals: work-life balance, growth, benefits
         """
         
-        result = await self.llm.process(
-            TaskType.JOB_ANALYSIS,
-            job_text,
-            system_prompt,
-            use_cache=True
+        # Use new LLM Gateway
+        response = await self.llm.chat(
+            messages=[{"role": "user", "content": job_text}],
+            system_instruction=system_prompt,
+            json_mode=True,
+            model_preference="gemini" # Gemini is better for structured data
         )
         
-        return result.get('job_data', result)
+        if not response:
+            return {}
+            
+        # Parse JSON response
+        try:
+            # Handle markdown code blocks if present
+            clean_text = response.replace('```json', '').replace('```', '').strip()
+            return json.loads(clean_text)
+        except json.JSONDecodeError:
+            print(f"⚠️ Failed to parse LLM JSON: {response[:100]}...")
+            return {}
     
     def _rule_based_extraction(self, text: str) -> Dict[str, Any]:
         """Extract job info using regex patterns"""
