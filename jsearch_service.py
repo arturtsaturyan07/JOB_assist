@@ -1,4 +1,8 @@
 import os
+import re
+import json
+import hashlib
+import random
 import httpx
 from typing import List, Dict, Any, Optional
 from models import Job, TimeBlock
@@ -38,11 +42,11 @@ class JSearchService:
         Returns:
             List of Job objects
         """
-        # JSearch works best with just the job title/skills in query
-        # Don't add location to query string - it reduces results dramatically
-        # We'll filter results by location after fetching
-        
+        # JSearch works best when location is part of the query string for specific regions
         search_query = query.strip()
+        
+        if location:
+            search_query += f" in {location}"
         
         # Add seniority if not present
         if "senior" not in search_query.lower() and "junior" not in search_query.lower():
@@ -143,14 +147,19 @@ class JSearchService:
                 if is_remote:
                     location = f"Remote ({location})" if location != "Remote" else "Remote"
                 
+                # Infer schedule
+                schedule_blocks = self._infer_schedule(item.get("job_title", ""))
+                total_minutes = sum(b.end - b.start for b in schedule_blocks)
+                hours_per_week = total_minutes // 60 if total_minutes > 0 else 40
+
                 job = Job(
                     job_id=str(item.get("job_id", "")),
                     title=item.get("job_title", "Unknown Job"),
                     location=location,
                     hourly_rate=round(hourly_rate, 2),
                     required_skills=[],  # JSearch doesn't provide structured skills
-                    hours_per_week=40,   # Default
-                    schedule_blocks=[],  # Default empty
+                    hours_per_week=hours_per_week,
+                    schedule_blocks=schedule_blocks,
                     # Additional fields we can add to display
                     company=item.get("employer_name", ""),
                     description=item.get("job_description", "")[:500] if item.get("job_description") else "",
@@ -164,6 +173,31 @@ class JSearchService:
                 continue
         
         return jobs
+        
+    def _infer_schedule(self, title: str) -> List[TimeBlock]:
+        """Infer schedule blocks based on job title keywords"""
+        title_lower = title.lower()
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+        
+        # Keyword-based Rules
+        if any(w in title_lower for w in ['driver', 'taxi', 'courier', 'delivery']):
+            # Evening/Flexible: 18:00 - 23:00
+            return [TimeBlock(day=d, start=1080, end=1380) for d in days]
+            
+        elif any(w in title_lower for w in ['call center', 'support', 'operator', 'agent']):
+            # Shifts
+            if hash(title) % 2 == 0:
+                # Morning: 08:00 - 14:00
+                return [TimeBlock(day=d, start=480, end=840) for d in days]
+            else:
+                # Afternoon: 14:00 - 20:00
+                return [TimeBlock(day=d, start=840, end=1200) for d in days]
+                
+        elif "part time" in title_lower or "part-time" in title_lower:
+            return [TimeBlock(day=d, start=600, end=840) for d in days]
+            
+        # Default: 09:00 - 18:00
+        return [TimeBlock(day=d, start=540, end=1080) for d in days]
 
 
 class LinkedInJobService:

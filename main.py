@@ -1,9 +1,14 @@
 import json
+import re
 import asyncio
 from typing import List, Dict, Any
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
 
 # Import Models
 from models import format_time
@@ -18,6 +23,46 @@ app = FastAPI()
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def start():
+    with open("static/index.html") as f:
+        return HTMLResponse(content=f.read())
+
+@app.post("/upload_cv")
+async def upload_cv(file: UploadFile = File(...)):
+    print(f"📄 Received CV upload: {file.filename}")
+    
+    content_type = file.content_type
+    filename = file.filename.lower()
+    text = ""
+    
+    try:
+        if filename.endswith(".pdf"):
+            if not pdfplumber:
+                return JSONResponse({"status": "error", "error": "PDF support not installed (pip install pdfplumber)"}, status_code=500)
+            
+            with pdfplumber.open(file.file) as pdf:
+                for page in pdf.pages:
+                    extract = page.extract_text()
+                    if extract:
+                        text += extract + "\n"
+                    
+        elif filename.endswith(".txt") or content_type == "text/plain":
+            content = await file.read()
+            text = content.decode("utf-8")
+            
+        else:
+            return JSONResponse({"status": "error", "error": "Only .pdf and .txt files are supported currently"}, status_code=400)
+            
+        if not text.strip():
+             return JSONResponse({"status": "error", "error": "Could not extract text from file"}, status_code=400)
+             
+        return {"status": "success", "text": text.strip()}
+        
+    except Exception as e:
+        print(f"❌ Upload error: {e}")
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
 
 # --- Initialization ---
 print("🚀 Initializing TwinWork AI Agents...")
@@ -108,7 +153,23 @@ class ChatSession:
         remote_ok = profile.get("remote_ok", False) # Default to false if not specified
         remote_only = remote_ok and not profile.get("onsite_ok", True)
         
-        jobs = await discovery_agent.search(query=query, location=loc, remote_only=remote_only)
+        # Split query for multi-role search
+        sub_queries = [q.strip() for q in re.split(r' and |,|&', query) if q.strip()]
+        if not sub_queries:
+            sub_queries = [query]
+            
+        all_jobs = []
+        seen_ids = set()
+        
+        for sub_q in sub_queries:
+             print(f"🔎 Searching for sub-query: {sub_q}")
+             sub_results = await discovery_agent.search(query=sub_q, location=loc, remote_only=remote_only)
+             for job in sub_results:
+                 if job.job_id not in seen_ids:
+                     all_jobs.append(job)
+                     seen_ids.add(job.job_id)
+                     
+        jobs = all_jobs
         
         if not jobs:
             await self.send_message("I couldn't find any jobs right now. Try broadening your location or skills.")

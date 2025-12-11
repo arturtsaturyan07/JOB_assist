@@ -81,7 +81,12 @@
                 <span class="close-modal" onclick="toggleCVUpload()">&times;</span>
             </div>
             <div class="modal-body">
-                <textarea id="cv-text" placeholder="Paste your CV text here..." rows="10"></textarea>
+                <textarea id="cv-text" placeholder="Paste your CV text here..." rows="6"></textarea>
+                <div style="margin: 15px 0; text-align: center; color: #666;">- OR -</div>
+                <div class="file-upload-wrapper" style="margin-bottom: 15px;">
+                    <label for="cv-file" style="display: block; margin-bottom: 5px;">Upload File (PDF, TXT)</label>
+                    <input type="file" id="cv-file" accept=".pdf,.txt" style="width: 100%;">
+                </div>
                 <button class="primary-btn" onclick="submitCV()">Analyze CV</button>
             </div>
         </div>

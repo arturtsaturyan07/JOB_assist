@@ -12,6 +12,7 @@ const ws = new WebSocket(wsUrl);
 // Global state for jobs to support filtering
 let currentSingleJobs = [];
 let currentPairJobs = [];
+let currentScheduleData = [];
 let currentTab = 'single';
 
 ws.onopen = () => {
@@ -45,6 +46,7 @@ ws.onmessage = (event) => {
         console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
         currentSingleJobs = data.single_jobs || [];
         currentPairJobs = data.pair_jobs || [];
+        currentScheduleData = data.schedule_data || [];
         displayJobsInPanel(); // Refresh display with new data
     }
 };
@@ -88,11 +90,51 @@ function toggleMarketInsights() {
 
 function submitCV() {
     const cvText = document.getElementById('cv-text').value.trim();
-    if (!cvText) {
-        alert("Please paste your CV text first.");
+    const fileInput = document.getElementById('cv-file');
+    const file = fileInput.files[0];
+
+    if (!cvText && !file) {
+        alert("Please paste your CV text or select a file.");
         return;
     }
 
+    // Handle File Upload
+    if (file) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        addMessage(`📄 Uploading ${file.name}...`, "user");
+        toggleCVUpload(); // Close modal
+
+        fetch('/upload_cv', {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    console.log("CV Upload parsed successfully");
+                    // Relay the parsed text to the WebSocket conversation
+                    ws.send(JSON.stringify({
+                        type: "cv_upload",
+                        content: data.text
+                    }));
+                } else {
+                    addMessage("❌ CV Upload failed: " + data.error, "bot");
+                }
+            })
+            .catch(error => {
+                addMessage("❌ CV Upload error. Please try just pasting text.", "bot");
+                console.error(error);
+            });
+
+        // Clear inputs
+        document.getElementById('cv-text').value = "";
+        fileInput.value = "";
+        return;
+    }
+
+    // Handle Text Paste (Legacy)
     if (cvText.length < 50) {
         alert("Please paste a longer CV (at least 50 characters).");
         return;
@@ -102,7 +144,7 @@ function submitCV() {
     toggleCVUpload();
 
     // Show user action
-    addMessage("📄 Uploaded CV", "user");
+    addMessage("📄 Uploaded CV (Text)", "user");
 
     // Send to backend
     ws.send(JSON.stringify({
@@ -167,14 +209,64 @@ function displayJobsInPanel(singleJobs = currentSingleJobs, pairJobs = currentPa
         }
     }
     else if (currentTab === 'schedule') {
-        // Placeholder for schedule view
-        jobsPanelContent.innerHTML = `
-            <div class="jobs-panel-empty">
-                <i class="fas fa-calendar-alt"></i>
-                <p>Schedule View</p>
-                <span>Visual timeline coming soon!</span>
-            </div>
-        `;
+        if (currentScheduleData && currentScheduleData.length > 0) {
+            jobsPanelContent.innerHTML = '<div class="schedule-container" style="display:flex; flex-direction:column; gap:10px;"></div>';
+            const container = jobsPanelContent.firstChild;
+
+            // Group by Day
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+            days.forEach(day => {
+                const dayRow = document.createElement('div');
+                dayRow.style.cssText = 'background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;';
+
+                const header = document.createElement('div');
+                header.textContent = day;
+                header.style.cssText = 'font-weight: bold; margin-bottom: 8px; color: #475569;';
+                dayRow.appendChild(header);
+
+                const timeline = document.createElement('div');
+                timeline.style.cssText = 'position: relative; height: 40px; background: #e2e8f0; border-radius: 20px; overflow: hidden;';
+
+                // Add hour markers (simplified)
+
+                // Add Job Blocks
+                currentScheduleData.forEach((job, idx) => {
+                    const block = job.schedule.find(b => b.day === day);
+                    if (block) {
+                        const startH = parseInt(block.start.split(':')[0]) + parseInt(block.start.split(':')[1]) / 60;
+                        const endH = parseInt(block.end.split(':')[0]) + parseInt(block.end.split(':')[1]) / 60;
+
+                        // Normalize 0-24h to 0-100%
+                        const left = ((startH) / 24) * 100;
+                        const width = ((endH - startH) / 24) * 100;
+
+                        const bar = document.createElement('div');
+                        const color = idx % 2 === 0 ? '#3b82f6' : '#10b981';
+                        bar.style.cssText = `position: absolute; left: ${left}%; width: ${width}%; top: 5px; bottom: 5px; background: ${color}; border-radius: 4px; font-size: 10px; color: white; display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 4px; cursor: title;`;
+                        bar.title = `${job.title} (${block.start}-${block.end})`;
+                        bar.textContent = job.title;
+                        timeline.appendChild(bar);
+                    }
+                });
+
+                dayRow.appendChild(timeline);
+                container.appendChild(dayRow);
+            });
+
+            // Legend
+            const legend = document.createElement('div');
+            legend.style.cssText = "margin-top: 10px; font-size: 12px; color: #64748b; text-align: center;";
+            legend.textContent = "Time: 00:00 - 24:00";
+            container.appendChild(legend);
+
+        } else {
+            jobsPanelContent.innerHTML = `
+                <div class="jobs-panel-empty">
+                    <i class="fas fa-calendar-alt"></i>
+                    <p>No schedule data yet.</p>
+                </div>
+            `;
+        }
     }
 }
 

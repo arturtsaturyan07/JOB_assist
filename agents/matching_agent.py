@@ -57,7 +57,7 @@ class MatchingAgent:
             age=25,
             location=data.get("location", ""),
             min_hourly_rate=float(data.get("min_rate", 0)),
-            max_hours_per_week=int(data.get("max_hours", 40)),
+            max_hours_per_week=int(data.get("max_hours") or 70),  # Default to 70 to allow pairs
             desired_hours_per_week=int(data.get("desired_hours")) if data.get("desired_hours") else None,
             remote_ok=data.get("remote_ok", True),  # Default to True to be safe
             onsite_ok=data.get("onsite_ok", True),

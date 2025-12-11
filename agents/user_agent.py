@@ -80,7 +80,7 @@ class UserContextAgent:
         
         Fields to extract:
         - "name": User's name
-        - "job_role": Desired job title (e.g. "Math Teacher", "Python Dev")
+        - "job_role": Desired job title(s). If multiple, join them with 'and' (e.g. "Driver and Teacher").
         - "skills": List of skills (e.g. ["Math", "Teaching", "Python"])
         - "location": Desired city/country (e.g. "Yerevan", "Remote")
         - "remote_type": "remote", "onsite", "hybrid", or "any"
@@ -93,8 +93,8 @@ class UserContextAgent:
         3. Do NOT invent information. If the user didn't say it, DO NOT include the key.
         4. If input is empty or just a greeting, return {}.
         
-        Example Input: "I am John, looking for python jobs in London"
-        Example Output: {"name": "John", "job_role": "Python Developer", "skills": ["Python"], "location": "London"}
+        Example Input: "I am John, looking for python jobs or driver work in London"
+        Example Output: {"name": "John", "job_role": "Python Developer and Driver", "skills": ["Python", "Driving"], "location": "London"}
         
         Example Input: "Hi"
         Example Output: {}
