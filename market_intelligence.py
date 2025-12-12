@@ -507,3 +507,58 @@ class MarketIntelligence:
 def get_market_intelligence() -> MarketIntelligence:
     """Get market intelligence instance"""
     return MarketIntelligence()
+
+class SalaryPredictor:
+    """
+    AI-powered Salary Predictor.
+    Uses statistical data where available, falls back to LLM for estimates.
+    """
+    def __init__(self):
+        from llm_gateway import LLMGateway
+        self.llm = LLMGateway()
+        self.market_intel = MarketIntelligence()
+        
+    async def predict_salary(self, role: str, location: str, experience_years: int = 2) -> Dict[str, Any]:
+        """
+        Predict salary for a role/location.
+        """
+        # 1. Try statistical data
+        stats = self.market_intel.get_salary_trends(role, location)
+        if stats['found']:
+            return {
+                "source": "statistical_data",
+                "currency": stats['data']['currency'],
+                "min": stats['data']['min_salary'],
+                "max": stats['data']['max_salary'],
+                "median": stats['data']['median_salary'],
+                "confidence": "high"
+            }
+            
+        # 2. Fallback to LLM
+        print(f"🤖 SalaryPredictor: Asking AI for '{role}' in '{location}'...")
+        prompt = f"""
+        Act as a compensation expert. Estimate the monthly salary range for a '{role}' in '{location}' 
+        with {experience_years} years of experience.
+        
+        Return ONLY valid JSON:
+        {{
+            "currency": "ISO_CODE",
+            "min": number,
+            "max": number,
+            "median": number,
+            "confidence": "medium" (or "low")
+        }}
+        """
+        
+        try:
+            response = await self.llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system_instruction="You are a data scientist specializing in global salary compensation.",
+                json_mode=True
+            )
+            import json
+            clean = response.replace('```json', '').replace('```', '').strip()
+            return json.loads(clean)
+        except Exception as e:
+            print(f"Salary Prediction Error: {e}")
+            return {"error": "Could not predict salary"}

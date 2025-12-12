@@ -566,7 +566,7 @@ Return ONLY valid JSON:
             if not phrase:
                 continue
             
-            print(f"[DEBUG] Checking phrase: '{phrase}'")
+
             
             # Try to match "[domain] [role]" pattern first
             for domain in domains:
@@ -586,7 +586,7 @@ Return ONLY valid JSON:
                 # Match role as standalone word or part of compound (e.g., "truck driver")
                 if re.search(rf'\b{role}\b', phrase, re.IGNORECASE):
                     role_name = role.capitalize()
-                    print(f"[DEBUG] Found role: '{role_name}'")
+
                     if role_name not in career_goals:
                         career_goals.append(role_name)
         
@@ -603,10 +603,10 @@ Return ONLY valid JSON:
                  and clean_snippet.lower() not in bad_words 
                  and clean_snippet.lower() not in greeting_words): # Explicit check
                  
-                 print(f"[DEBUG] Using fallback: '{clean_snippet.title()}'")
+
                  career_goals.append(clean_snippet.title())
 
-        print(f"[DEBUG] Final results - Skills: {skills}, Goals: {career_goals}")
+
         
         if skills or career_goals:
             if skills:

@@ -32,7 +32,7 @@ class MatchingAgent:
         matcher = LegacyMatcher(jobs)
         
         # 1. Single Matches
-        single_matches = matcher.match_single_jobs(profile, limit=5)
+        single_matches = matcher.match_single_jobs(profile, limit=10)
         
         # 2. Pair Matches (TwinWork capability)
         pair_matches = matcher.match_job_pairs(profile, limit=3)

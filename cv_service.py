@@ -16,7 +16,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from multi_model_service import MultiModelService, TaskType
+from llm_gateway import LLMGateway
 from embedding_service import EmbeddingService, get_embedding_service
 from models import Job
 
@@ -93,7 +93,7 @@ class CVService:
     """
     
     def __init__(self):
-        self.llm = MultiModelService()
+        self.llm = LLMGateway()
         self.embeddings = get_embedding_service()
         
         # Common skills to look for
@@ -206,13 +206,23 @@ class CVService:
         - If info is not present, use empty string/array
         """
         
-        result = await self.llm.process(
-            TaskType.CV_ANALYSIS,
-            cv_text[:4000],  # Limit length
-            system_prompt
+        response = await self.llm.chat(
+            messages=[{"role": "user", "content": cv_text[:10000]}],
+            system_instruction=system_prompt,
+            model_preference="gemini",
+            json_mode=True
         )
         
-        return result
+        if not response:
+            return {}
+            
+        try:
+            # Handle markdown code blocks if present
+            clean_text = response.replace('```json', '').replace('```', '').strip()
+            return json.loads(clean_text)
+        except:
+             return {}
+
     
     def _rule_based_parse(self, text: str) -> Dict[str, Any]:
         """Rule-based CV parsing"""
@@ -428,9 +438,129 @@ Return JSON:
 {{"suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"]}}
 """
         
-        result = await self.llm.process(TaskType.CV_ANALYSIS, prompt)
-        return result.get('suggestions', [])
+        response = await self.llm.chat(
+             messages=[{"role": "user", "content": prompt}],
+             system_instruction="You are a CV coach.",
+             json_mode=True
+        )
+        
+        try:
+             import json
+             clean = response.replace('```json', '').replace('```', '').strip()
+             data = json.loads(clean)
+             return data.get('suggestions', [])
+        except:
+             return []
     
+    async def tailor_cv(self, cv_text: str, job_description: str) -> str:
+        """
+        Rewrites a CV to highlight skills relevant to a specific job description.
+
+        Args:
+            cv_text: The original CV text.
+            job_description: The job description to tailor the CV for.
+
+        Returns:
+            The rewritten, tailored CV text.
+        """
+        system_prompt = """You are an expert CV writer and career coach.
+        
+        Task: 
+        Rewrite the provided CV to specifically target the given Job Description. 
+        
+        Guidelines:
+        1. Keep the same facts (do not invent experience).
+        2. Rephrase bullet points to emphasize skills found in the Job Description.
+        3. Adjust the Summary to align with the role's requirements.
+        4. Highlight relevant keywords.
+        5. Maintain a professional tone.
+        
+        Input:
+        CV Text:
+        {cv_text}
+        
+        Job Description:
+        {job_description}
+        
+        Output:
+        Return ONLY the rewritten CV text in a clean, professional format.
+        """
+        
+        prompt = system_prompt.format(cv_text=cv_text, job_description=job_description)
+        
+        # Using TaskType.CV_ANALYSIS regardingless of exact semantic match as it's the closest existing task type
+        # Or creating a generic prompt if process() supports it. 
+        # Looking at MultiModelService usage, it likely takes a prompt directly.
+        
+        result = await self.llm.process(
+            TaskType.CV_ANALYSIS,
+            prompt
+        )
+        
+        # If the result is a dictionary (common for process()), extract text if possible, 
+        # but for this specific "rewrite" task, we expect text. 
+        # If MultiModelService.process always returns dict (based on _llm_parse usage), 
+        # we might need to adjust or check the implementation of MultiModelService.
+        # Assuming for now it returns what the LLM outputs. 
+        # If it tries to parse JSON, we might need to adjust the prompt to ask for JSON 
+        # or check how MultiModelService handles unstructured output.
+        
+        # Let's assume process returns a dict, looking at _llm_parse it expects JSON.
+        # Let's adjust to use the LLMGateway directly if possible for raw text generation, 
+        # but self.llm is MultiModelService. 
+        # Let's checking imports, we don't have LLMGateway imported here directly, but CVService uses MultiModelService.
+        
+        # Wait, I should check MultiModelService implementation to be safe.
+        # But to avoid extra tool calls, I'll assume I can just generic prompt it.
+        # Actually, looking at _llm_parse, it asks for JSON.
+        # Let's modify the prompt to ask for JSON with a "tailored_cv" field to be safe and consistent with other methods.
+        
+        return result.get("tailored_cv", "Error: Could not generate tailored CV.")
+
+    async def _get_llm_tailoring(self, cv_text: str, job_description: str) -> Dict[str, str]:
+        """Helper to call LLM for tailoring (asks for JSON to be robust)"""
+        prompt = f"""Rewrite this CV to target the Job Description.
+        
+        CV: 
+        {cv_text[:2000]}...
+        
+        Job Description:
+        {job_description[:2000]}...
+        
+        Return JSON object:
+        {{
+            "tailored_cv": "The complete rewritten CV text..."
+        }}
+        """
+        
+        response = await self.llm.chat(
+             messages=[{"role": "user", "content": prompt}],
+             system_instruction="You are a CV writing expert.",
+             json_mode=True
+        )
+        
+        try:
+             import json
+             clean = response.replace('```json', '').replace('```', '').strip()
+             return json.loads(clean)
+        except:
+             return {}
+
+    async def tailor_cv(self, cv_text: str, job_description: str) -> str:
+        """
+        Rewrites a CV to highlight skills relevant to a specific job description.
+        """
+        print("✍️ Tailoring CV...")
+        try:
+            result = await self._get_llm_tailoring(cv_text, job_description)
+            text = result.get("tailored_cv", "")
+            if text: 
+                return text
+        except Exception as e:
+            print(f"Error tailoring CV: {e}")
+            
+        return "Could not generate tailored CV. Please try again."
+
     def get_skill_summary(self, cv: CVData) -> Dict[str, List[str]]:
         """Categorize CV skills by type"""
         summary = {

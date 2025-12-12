@@ -27,9 +27,15 @@ def normalize_day(raw: str) -> str:
         raise ValueError(f"Unsupported day name: {raw}")
     return DAY_ALIASES[key]
 
-def parse_time(raw: str) -> int:
-    hour, minute = raw.split(":")
-    return int(hour) * 60 + int(minute)
+def parse_time(raw: Union[str, int]) -> int:
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and ":" in raw:
+        hour, minute = raw.split(":")
+        return int(hour) * 60 + int(minute)
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return 0 # Fallback
 
 def format_time(minutes: int) -> str:
     hour = minutes // 60
@@ -43,9 +49,9 @@ class TimeBlock:
     end: int
 
     @classmethod
-    def from_dict(cls, payload: Dict[str, str]) -> "TimeBlock":
+    def from_dict(cls, payload: Dict[str, Union[str, int]]) -> "TimeBlock":
         return cls(
-            day=normalize_day(payload["day"]),
+            day=normalize_day(str(payload["day"])),
             start=parse_time(payload["start"]),
             end=parse_time(payload["end"]),
         )
@@ -64,8 +70,10 @@ class Job:
     hours_per_week: int
     schedule_blocks: Sequence[TimeBlock]
     # Additional fields for real job data
+    currency: str = "USD"  # Moved after defaults
     company: str = ""
     job_source: str = "" # e.g. "jsearch", "adzuna", "staff.am"
+    search_query: str = "" # The query that found this job
     description: str = ""
     apply_link: str = ""
     posted_date: str = ""
@@ -78,7 +86,7 @@ class Job:
     def is_remote(self) -> bool:
         return "remote" in self.location.lower()
 
-def build_busy_map(schedule: Dict[str, Sequence[Tuple[str, str]]]) -> Dict[str, List[Tuple[int, int]]]:
+def build_busy_map(schedule: Dict[str, Sequence[Tuple[Union[str, int], Union[str, int]]]]) -> Dict[str, List[Tuple[int, int]]]:
     busy: Dict[str, List[Tuple[int, int]]] = {day: [] for day in DAY_ORDER}
     for raw_day, blocks in schedule.items():
         day = normalize_day(raw_day)
@@ -101,6 +109,7 @@ class UserProfile:
     career_goals: str
     preferences: Dict[str, str]
     busy_schedule: Dict[str, Sequence[Tuple[str, str]]]
+    currency: str = "USD" # Moved after defaults
     preferred_locations: Optional[Sequence[str]] = None
     # New TwinWork AI fields
     languages: Sequence[str] = field(default_factory=list)

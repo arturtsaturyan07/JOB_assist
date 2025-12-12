@@ -18,6 +18,7 @@ from llm_gateway import LLMGateway
 from agents.user_agent import UserContextAgent
 from agents.discovery_agent import JobDiscoveryAgent
 from agents.matching_agent import MatchingAgent
+from cv_service import analyze_cv
 
 app = FastAPI()
 
@@ -42,11 +43,15 @@ async def upload_cv(file: UploadFile = File(...)):
             if not pdfplumber:
                 return JSONResponse({"status": "error", "error": "PDF support not installed (pip install pdfplumber)"}, status_code=500)
             
-            with pdfplumber.open(file.file) as pdf:
-                for page in pdf.pages:
-                    extract = page.extract_text()
-                    if extract:
-                        text += extract + "\n"
+            try:
+                with pdfplumber.open(file.file) as pdf:
+                    for page in pdf.pages:
+                        extract = page.extract_text()
+                        if extract:
+                            text += extract + "\n"
+            except Exception as e:
+                print(f"❌ PDF reading error: {e}")
+                return JSONResponse({"status": "error", "error": f"Invalid PDF file: {str(e)}"}, status_code=400)
                     
         elif filename.endswith(".txt") or content_type == "text/plain":
             content = await file.read()
@@ -56,7 +61,7 @@ async def upload_cv(file: UploadFile = File(...)):
             return JSONResponse({"status": "error", "error": "Only .pdf and .txt files are supported currently"}, status_code=400)
             
         if not text.strip():
-             return JSONResponse({"status": "error", "error": "Could not extract text from file"}, status_code=400)
+             return JSONResponse({"status": "error", "error": "Could not read text from this file. If this is a scanned PDF (image), please convert it to text first."}, status_code=400)
              
         return {"status": "success", "text": text.strip()}
         
@@ -107,8 +112,8 @@ class ChatSession:
                     # TODO: Implement feedback handling via Agent
                     return
                 if data.get("type") == "cv_upload":
-                    # TODO: Implement generic file/CV handling
-                    await self.send_message("CV upload received (Parsing not yet connected to Agent).")
+                    cv_text = data.get("content", "")
+                    await self.handle_cv_upload(cv_text)
                     return
             else:
                 text = str(data)
@@ -117,6 +122,60 @@ class ChatSession:
             
         except json.JSONDecodeError:
             await self.process_input(raw_message)
+
+    async def handle_cv_upload(self, cv_text: str):
+        """Process uploaded CV text and update agent state"""
+        await self.send_message("📄 Analyzing your CV... this might take a moment.")
+        
+        try:
+            # 1. Analyze with CV Service
+            analysis = await analyze_cv(cv_text)
+            cv_data = analysis.get('cv_data', {})
+            skills = cv_data.get('skills', [])
+            name = cv_data.get('name')
+            experience = cv_data.get('experience', [])
+            
+            # 2. Update User Agent Profile
+            # Create a synthetic "extraction" result to feed into the agent
+            extracted_info = {
+                "skills": skills,
+                "experience_years": cv_data.get('total_experience_years'),
+                "location": cv_data.get('location'),
+                "cv_summary": cv_data.get('summary')
+            }
+            if name:
+                extracted_info["name"] = name
+                
+            # Safely update profile
+            for k, v in extracted_info.items():
+                if v:
+                    self.user_agent.user_profile[k] = v
+                    
+            # 3. Formulate response
+            response = f"Thanks! I've analyzed your CV."
+            if name:
+                response += f" Nice to meet you, {name}!"
+            
+            if skills:
+                top_skills = ", ".join(skills[:5])
+                response += f"\n\nI see you have skills in: **{top_skills}**"
+                if len(skills) > 5:
+                    response += f" and {len(skills)-5} others."
+            
+            response += "\n\nIs this correct? Would you like me to start searching for jobs based on this?"
+            
+            # Send results to frontend (so UI can update state if needed)
+            await self.websocket.send_json({
+                "type": "cv_analysis",
+                "skills": skills,
+                "name": name
+            })
+            
+            await self.send_message(response)
+            
+        except Exception as e:
+            print(f"Error handling CV: {e}")
+            await self.send_message("I had some trouble analyzing your CV, but I received the text. Let's continue chatting!")
 
     async def process_input(self, text: str):
         # 1. Delegate to User Agent
@@ -166,6 +225,8 @@ class ChatSession:
              sub_results = await discovery_agent.search(query=sub_q, location=loc, remote_only=remote_only)
              for job in sub_results:
                  if job.job_id not in seen_ids:
+                     # Tag the job with the query that found it for diversity logic
+                     job.search_query = sub_q
                      all_jobs.append(job)
                      seen_ids.add(job.job_id)
                      
@@ -175,7 +236,7 @@ class ChatSession:
             await self.send_message("I couldn't find any jobs right now. Try broadening your location or skills.")
             return
 
-        self.found_jobs = jobs
+        self.found_jobs.extend([j for j in jobs if j.job_id not in {existing.job_id for existing in self.found_jobs}])
         await self.send_message(f"Found {len(jobs)} jobs! Analyzing best matches...")
 
         # 2. Matching Agent
@@ -224,7 +285,18 @@ class ChatSession:
 
         schedule_data = []
         # Basic schedule viz logic
-        for job in matches.get("raw_top_jobs", []):
+        # Includes both Single jobs and Pair jobs
+        jobs_for_schedule = []
+        jobs_for_schedule.extend(matches.get("raw_top_jobs", []))
+        for p in matches.get("pairs", []):
+            jobs_for_schedule.extend(p.jobs)
+            
+        # Deduplicate by ID
+        seen_sched_ids = set()
+        for job in jobs_for_schedule:
+            if job.job_id in seen_sched_ids: continue
+            seen_sched_ids.add(job.job_id)
+            
             if hasattr(job, "schedule_blocks") and job.schedule_blocks:
                  schedule_data.append({
                     "job_id": job.job_id,

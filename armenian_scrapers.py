@@ -58,12 +58,20 @@ class ArmenianJobScraper:
     """
     
     # Request headers
+    # Request headers - Enhanced to mimic real browser
     HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
+        'Cache-Control': 'max-age=0',
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
     }
     
     # Request delay (seconds) - be respectful!
@@ -129,7 +137,7 @@ class ArmenianJobScraper:
         Returns:
             List of normalized Job objects
         """
-        print(f"🇦🇲 Searching Armenian job sites for: {query}")
+        print(f"[SEARCH] Searching Armenian job sites for: {query}")
         
         # Run searches in parallel
         tasks = [
@@ -146,14 +154,14 @@ class ArmenianJobScraper:
         for i, result in enumerate(results):
             source = ['staff.am', 'job.am', 'list.am'][i]
             if isinstance(result, Exception):
-                print(f"⚠️ {source} search failed: {result}")
+                print(f"[WARN] {source} search failed: {result}")
                 source_counts[source] = 0
             elif isinstance(result, list):
                 all_jobs.extend(result)
                 source_counts[source] = len(result)
-                print(f"✅ {source}: {len(result)} jobs")
+                print(f"[OK] {source}: {len(result)} jobs")
         
-        print(f"📊 Total: {len(all_jobs)} jobs from Armenian sites")
+        print(f"[STATS] Total: {len(all_jobs)} jobs from Armenian sites")
         
         return all_jobs
     
@@ -173,7 +181,7 @@ class ArmenianJobScraper:
         
         # Check cache
         if cache_key in self.cache and self._is_cache_valid(self.cache[cache_key]):
-            print(f"📦 Using cached results for {source}")
+            print(f"[CACHE] Using cached results for {source}")
             return self._parse_cached_jobs(self.cache[cache_key]['jobs'])
         
         await self._rate_limit(source)
@@ -184,80 +192,31 @@ class ArmenianJobScraper:
             search_url += f"&location={quote_plus(location)}"
         
         try:
-            print(f"🌍 querying: {search_url}")
+            print(f"[NET] querying: {search_url}")
             async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
                 response = await client.get(search_url, headers=self.HEADERS)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
-                print(f"✅ staff.am HTML size: {len(response.text)}")
+                print(f"[OK] staff.am HTML size: {len(response.text)}")
                 
-                scraped = []
+                scraped = []  # Initialize here before any checks
+                
+                if "No jobs found" in response.text or "0 jobs found" in response.text:
+                    # heuristic check
+                    pass
+
                 # Strategy 1: Known classes
                 job_cards = soup.select('.job-card, .job-item, .jobs-list-item, .job-inner, [data-key]')
                 
-                # Strategy 2: If no cards, look for any link structure resembling a job list
-                if not job_cards:
-                    print("⚠️ Standard selectors failed. Attempting link-based extraction...")
-                    # Find all links to job details
-                    job_links = soup.select('a[href*="/en/jobs/"], a[href*="/jobs/"]')
-                    seen_urls = set()
-                    
-                    for link in job_links:
-                        url = link.get('href')
-                        if not url or url in seen_urls: continue
-                        
-                        # Filter out non-job links (like categories if any)
-                        if '/categories/' in url: continue
-                        
-                        seen_urls.add(url)
-                        
-                        # Usually the link text is the job title
-                        title = link.get_text(strip=True)
-                        if len(title) < 3 or "View more" in title: continue
-                        
-                        # FILTER: If title doesn't match query words at all, skip
-                        # This prevents "Recent Jobs" from polluting search results
-                        # when the site falls back to default listing.
-                        query_words = set(query.lower().split())
-                        title_words = set(title.lower().split())
-                        if not query_words.intersection(title_words) and len(query) > 2:
-                             # Try partial match
-                             if not any(q in title.lower() for q in query_words if len(q) > 3):
-                                 continue
-                        
-                        # Try to find company near the link
-                        # This is heuristic: often company is in a sibling link or parent
-                        company = ""
-                        # Look for nearby company link
-                        company_link = link.find_next('a', href=re.compile(r'/company/'))
-                        if company_link:
-                            company = company_link.get_text(strip=True)
-                        
-                        full_url = urljoin("https://staff.am", url)
-                        
-                        scraped.append(ScrapedJob(
-                            title=title,
-                            company=company,
-                            location=location or "Yerevan",
-                            url=full_url,
-                            source="staff.am"
-                        ))
-                    
-                    # Limit early since headers might pick up duplicates
-                    scraped = scraped[:limit]
-
-                else:
-                    # Existing robust logic for cards
-                    for card in job_cards[:limit]:
+                if job_cards:
+                     for card in job_cards[:limit]:
                         try:
                             title_elem = card.select_one('h2, h3, .job-title, [class*="title"]')
-                            # Fallback: find the first link to a job
                             if not title_elem:
                                 title_elem = card.select_one('a[href*="/jobs/"]')
                                 
                             company_elem = card.select_one('.company, .employer, [class*="company"]')
-                            # Fallback: link to company
                             if not company_elem:
                                 company_elem = card.select_one('a[href*="/company/"]')
                                 
@@ -266,12 +225,10 @@ class ArmenianJobScraper:
                             
                             if title_elem and link_elem:
                                 title_text = title_elem.get_text(strip=True)
-                                
-                                # FILTER: Relevance check
-                                query_words = set(query.lower().split())
-                                if not any(q in title_text.lower() for q in query_words if len(q) > 3) and len(query) > 2:
-                                    continue
-                                    
+                                # Basic Filter
+                                if len(query) > 2 and query.lower() not in title_text.lower():
+                                     continue
+
                                 scraped.append(ScrapedJob(
                                     title=title_text,
                                     company=company_elem.get_text(strip=True) if company_elem else "",
@@ -279,37 +236,65 @@ class ArmenianJobScraper:
                                     url=urljoin("https://staff.am", link_elem['href']),
                                     source="staff.am"
                                 ))
-                        except Exception as e:
+                        except Exception:
                             continue
 
-                # Demo Mode Fallback: If no real jobs found (scraper blocked/empty), inject mocks for user demo
-                if not scraped:
-                    q_lower = query.lower()
-                    if "call center" in q_lower or "operator" in q_lower:
-                        print("⚠️ Injecting Mock Call Center Job for Demo")
-                        scraped.append(ScrapedJob(
-                            title="Call Center Operator (Demo)",
-                            company="TeleCom AR",
-                            location="Yerevan",
-                            url="https://staff.am/en/jobs/mock-call-center",
-                            source="staff.am"
-                        ))
-                    if "driver" in q_lower or "taxi" in q_lower:
-                        print("⚠️ Injecting Mock Driver Job for Demo")
-                        scraped.append(ScrapedJob(
-                            title="Taxi Driver (Demo)",
-                            company="Yandex Taxi",
-                            location="Yerevan",
-                            url="https://staff.am/en/jobs/mock-taxi",
-                            source="staff.am"
-                        ))
 
-                print(f"✅ Found {len(scraped)} raw jobs on staff.am")
+                # Strategy 2: Fallback to Link Extraction (Always try if few results)
+                if len(scraped) < limit:
+                    # Find all links to job details
+                    job_links = soup.select('a[href*="/en/jobs/"], a[href*="/jobs/"]')
+                    seen_urls = {j.url for j in scraped}
+                    
+                    for link in job_links:
+                        try:
+                            url = link.get('href')
+                            if not url: continue
+                            
+                            full_url = urljoin("https://staff.am", url)
+                            if full_url in seen_urls: continue
+                            
+                            if '/categories/' in url: continue
+                            
+                            title = link.get_text(strip=True)
+                            if len(title) < 3 or "View more" in title: continue
+                            
+                            # Loose Filter: if query words are in title
+                            if len(query) > 2:
+                                q_slug = query.lower()
+                                title_slug = title.lower()
+                                if q_slug not in title_slug and not any(w in title_slug for w in q_slug.split() if len(w) > 3):
+                                    continue
+                            
+                            seen_urls.add(full_url)
+                            
+                            company = ""
+                            try:
+                                company_link = link.find_next('a', href=re.compile(r'/company/'))
+                                if company_link:
+                                     company = company_link.get_text(strip=True)
+                            except:
+                                pass
+                            
+                            scraped.append(ScrapedJob(
+                                title=title,
+                                company=company,
+                                location="Armenia",
+                                url=full_url,
+                                source="staff.am"
+                            ))
+                        except Exception:
+                            continue
+                    
+                    scraped = scraped[:limit]
+
+
+                print(f"[OK] Found {len(scraped)} raw jobs on staff.am")
                 jobs = await self._normalize_jobs(scraped)
                 return jobs
                 
         except Exception as e:
-            print(f"❌ staff.am error: {e}")
+            print(f"[ERROR] staff.am error: {e}")
             return []
     
     async def search_job_am(
@@ -328,13 +313,14 @@ class ArmenianJobScraper:
         
         # Check cache
         if cache_key in self.cache and self._is_cache_valid(self.cache[cache_key]):
-            print(f"📦 Using cached results for {source}")
+            print(f"[CACHE] Using cached results for {source}")
             return self._parse_cached_jobs(self.cache[cache_key]['jobs'])
         
         await self._rate_limit(source)
         
         # job.am search URL
-        search_url = f"https://www.job.am/search?q={quote_plus(query)}"
+        # Correct pattern for job.am search
+        search_url = f"https://job.am/en/jobs?n={quote_plus(query)}"
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -376,7 +362,7 @@ class ArmenianJobScraper:
                 return jobs
                 
         except Exception as e:
-            print(f"❌ job.am error: {e}")
+            print(f"[ERROR] job.am error: {e}")
             return []
     
     async def search_list_am(
@@ -394,13 +380,15 @@ class ArmenianJobScraper:
         
         # Check cache
         if cache_key in self.cache and self._is_cache_valid(self.cache[cache_key]):
-            print(f"📦 Using cached results for {source}")
+            print(f"[CACHE] Using cached results for {source}")
             return self._parse_cached_jobs(self.cache[cache_key]['jobs'])
         
         await self._rate_limit(source)
         
         # list.am jobs search
-        search_url = f"https://www.list.am/en/category/91?q={quote_plus(query)}"  # 91 = jobs category
+        # list.am jobs search
+        # Using simplified path which often works better with antibot
+        search_url = f"https://www.list.am/en/category/91?q={quote_plus(query)}"
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -441,7 +429,7 @@ class ArmenianJobScraper:
                 return jobs
                 
         except Exception as e:
-            print(f"❌ list.am error: {e}")
+            print(f"[ERROR] list.am error: {e}")
             return []
     
     async def parse_manual_job(self, job_text: str) -> Job:
@@ -450,7 +438,7 @@ class ArmenianJobScraper:
         
         Users can paste job descriptions directly when scraping fails.
         """
-        print("📝 Parsing manually pasted job...")
+        print("[PARSE] Parsing manually pasted job...")
         
         # Use job intelligence for extraction
         parsed = await self.job_intelligence.analyze_job(job_text, source="manual")
@@ -491,9 +479,15 @@ class ArmenianJobScraper:
             posted_date=""
         )
     
-    def _infer_schedule(self, title: str) -> Tuple[List[TimeBlock], int]:
-        """Infer schedule blocks and hours based on job title keywords"""
+    def _infer_schedule(self, title: str, location: str = "") -> Tuple[List[TimeBlock], int]:
+        """Infer schedule blocks based on job title keywords (Shared logic)"""
         title_lower = title.lower()
+        loc_lower = (location or "").lower()
+        
+        # Remote = Flexible
+        if "remote" in title_lower or "remote" in loc_lower:
+             return [], 40
+             
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
         
         # Keyword-based Rules
@@ -534,7 +528,7 @@ class ArmenianJobScraper:
             ).hexdigest()[:12]
             
             # Helper to infer schedule
-            schedule_blocks, hours_per_week = self._infer_schedule(scraped.title)
+            schedule_blocks, hours_per_week = self._infer_schedule(scraped.title, scraped.location)
             
             hourly_rate = 10.0
 
@@ -558,15 +552,15 @@ class ArmenianJobScraper:
                 )
                  jobs.append(job_am)
                  
-                 # Variant 2: Afternoon
-                 blocks_pm = [TimeBlock(day=d, start=840, end=1200) for d in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']]
+                 # Variant 2: Afternoon (ends at 18:00 to avoid overlap with driver evening shift)
+                 blocks_pm = [TimeBlock(day=d, start=840, end=1080) for d in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']]
                  job_pm = Job(
                     job_id=job_id + "_pm",
                     title=f"{scraped.title} (Afternoon Shift)",
                     location=scraped.location or "Yerevan, Armenia",
                     hourly_rate=hourly_rate,
                     required_skills=[],
-                    hours_per_week=30,
+                    hours_per_week=24,  # 4 hours/day * 6 days = 24h/week
                     schedule_blocks=blocks_pm,
                     company=scraped.company,
                     description=scraped.description,

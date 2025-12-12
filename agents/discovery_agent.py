@@ -51,20 +51,25 @@ class JobDiscoveryAgent:
         Aggregated search from all providers.
         """
         tasks = []
-        print(f"[DiscoveryAgent] Searching for '{query}' in '{location}'...")
+        # Support multi-location search (e.g. "London, US")
+        locations = [l.strip() for l in location.split(",") if l.strip()] if location else ["Yerevan"]
         
-        # 1. JSearch
-        if self.jsearch:
-            tasks.append(self.jsearch.search_jobs(query, location, remote_only=remote_only, num_pages=1))
+        for loc in locations:
+            print(f"[DiscoveryAgent] Searching for '{query}' in '{loc}'...")
             
-        # 2. Adzuna
-        if self.adzuna:
-            tasks.append(self.adzuna.search_jobs(query, location or "anywhere"))
-            
-        # 3. Armenian Scrapers
-        # Only run if location is Armenia-relevant or generic
-        if not location or "yerevan" in location.lower() or "armenia" in location.lower():
-            tasks.append(self.armenian.search_all(query, location or "Yerevan"))
+            # 1. JSearch
+            if self.jsearch:
+                tasks.append(self.jsearch.search_jobs(query, loc, remote_only=remote_only, num_pages=1))
+                
+            # 2. Adzuna
+            if self.adzuna:
+                tasks.append(self.adzuna.search_jobs(query, loc))
+                
+            # 3. Armenian Scrapers (Trigger for any known Armenian city or generic "Armenia")
+            loc_lower = loc.lower()
+            armenian_locations = ["armenia", "yerevan", "gyumri", "vanadzor", "dilijan", "abovyan", "hrazdan", "vagharshapat"]
+            if any(place in loc_lower for place in armenian_locations):
+                tasks.append(self.armenian.search_all(query, loc))
 
         if not tasks:
             print("[DiscoveryAgent] No search services configured!")

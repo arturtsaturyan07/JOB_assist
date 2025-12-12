@@ -4,10 +4,80 @@ const sendBtn = document.getElementById('send-btn');
 const optionsContainer = document.getElementById('options-container');
 const jobsPanelContent = document.getElementById('jobs-panel-content');
 
-// Connect to WebSocket
+// Connect to WebSocket with Auto-Reconnect
+let ws;
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
-const ws = new WebSocket(wsUrl);
+
+function connectWebSocket() {
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log('Connected to chat server');
+        const statusMsg = document.getElementById('connection-status');
+        if (statusMsg) statusMsg.remove();
+
+        // Enable input
+        messageInput.disabled = false;
+        messageInput.placeholder = "Type your answer...";
+        document.getElementById('send-btn').disabled = false;
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('WebSocket message received:', data);
+
+        // Handle CV Analysis results
+        if (data.type === 'cv_analysis') {
+            // Processing logic
+        }
+
+        if (data.type === 'text' || data.type === 'choice') {
+            addMessage(data.message, 'bot');
+            if (data.options && data.options.length > 0) {
+                showOptions(data.options);
+            } else {
+                optionsContainer.innerHTML = '';
+            }
+        }
+
+        // Handle job data
+        if (data.type === 'jobs' || (data.single_jobs && data.single_jobs.length > 0)) {
+            console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
+            currentSingleJobs = data.single_jobs || [];
+            currentPairJobs = data.pair_jobs || [];
+            currentScheduleData = data.schedule_data || [];
+            displayJobsInPanel();
+        }
+    };
+
+    ws.onclose = () => {
+        console.log('Connection lost. Reconnecting in 3s...');
+
+        // Disable input
+        messageInput.disabled = true;
+        messageInput.placeholder = "Connecting to server...";
+        document.getElementById('send-btn').disabled = true;
+
+        // Show non-intrusive status
+        if (!document.getElementById('connection-status')) {
+            const status = document.createElement('div');
+            status.id = 'connection-status';
+            status.style.cssText = 'position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #ef4444; color: white; padding: 5px 15px; border-radius: 20px; font-size: 0.8rem; z-index: 1000;';
+            status.textContent = 'Connection lost. Reconnecting...';
+            document.body.appendChild(status);
+        }
+        setTimeout(connectWebSocket, 3000);
+    };
+
+    ws.onerror = (err) => {
+        console.error('WebSocket encountered error: ', err);
+        ws.close();
+    };
+}
+
+// Initial connection
+connectWebSocket();
 
 // Global state for jobs to support filtering
 let currentSingleJobs = [];
@@ -15,45 +85,7 @@ let currentPairJobs = [];
 let currentScheduleData = [];
 let currentTab = 'single';
 
-ws.onopen = () => {
-    console.log('Connected to chat server');
-};
 
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    console.log('WebSocket message received:', data);
-
-    // Handle CV Analysis results specifically
-    if (data.type === 'cv_analysis') {
-        const skills = data.skills.join(', ');
-        // We handle the text message part separately, this just updates internal state if needed
-        // But mainly the server sends a text message after this JSON
-    }
-
-    if (data.type === 'text' || data.type === 'choice') {
-        addMessage(data.message, 'bot');
-
-        if (data.options && data.options.length > 0) {
-            showOptions(data.options);
-        } else {
-            optionsContainer.innerHTML = ''; // Clear options if none
-        }
-    }
-
-    // Handle job data in side panel
-    if (data.type === 'jobs' || (data.single_jobs && data.single_jobs.length > 0)) {
-        console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
-        currentSingleJobs = data.single_jobs || [];
-        currentPairJobs = data.pair_jobs || [];
-        currentScheduleData = data.schedule_data || [];
-        displayJobsInPanel(); // Refresh display with new data
-    }
-};
-
-ws.onclose = () => {
-    addMessage('Connection lost. Please refresh the page.', 'bot');
-};
 
 // --- UI Toggle Functions ---
 
@@ -210,54 +242,99 @@ function displayJobsInPanel(singleJobs = currentSingleJobs, pairJobs = currentPa
     }
     else if (currentTab === 'schedule') {
         if (currentScheduleData && currentScheduleData.length > 0) {
-            jobsPanelContent.innerHTML = '<div class="schedule-container" style="display:flex; flex-direction:column; gap:10px;"></div>';
+            jobsPanelContent.innerHTML = '<div class="schedule-container" style="display:flex; flex-direction:column; gap:20px; padding: 10px;"></div>';
             const container = jobsPanelContent.firstChild;
 
-            // Group by Day
             const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
             days.forEach(day => {
-                const dayRow = document.createElement('div');
-                dayRow.style.cssText = 'background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0;';
+                const dayBlock = document.createElement('div');
+                dayBlock.className = 'schedule-day-block';
+                dayBlock.style.cssText = 'background: white; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05);';
 
+                // Day Header
                 const header = document.createElement('div');
                 header.textContent = day;
-                header.style.cssText = 'font-weight: bold; margin-bottom: 8px; color: #475569;';
-                dayRow.appendChild(header);
+                header.style.cssText = 'background: #f1f5f9; padding: 8px 16px; font-weight: 700; color: #334155; border-bottom: 1px solid #e2e8f0; font-size: 0.9rem;';
+                dayBlock.appendChild(header);
 
-                const timeline = document.createElement('div');
-                timeline.style.cssText = 'position: relative; height: 40px; background: #e2e8f0; border-radius: 20px; overflow: hidden;';
+                // Content Container
+                const content = document.createElement('div');
+                content.style.cssText = 'padding: 10px; display: flex; flex-direction: column; gap: 8px;';
 
-                // Add hour markers (simplified)
+                // Time Scale (Ruler)
+                const ruler = document.createElement('div');
+                ruler.style.cssText = 'display: flex; margin-left: 30%; height: 20px; border-bottom: 1px solid #cbd5e1; font-size: 0.7rem; color: #94a3b8; position: relative; margin-bottom: 5px;';
+                [0, 6, 12, 18, 24].forEach(h => {
+                    const mark = document.createElement('div');
+                    mark.textContent = h;
+                    mark.style.cssText = `position: absolute; left: ${(h / 24) * 100}%; transform: translateX(-50%); bottom: 2px;`;
+                    ruler.appendChild(mark);
+                });
+                content.appendChild(ruler);
 
-                // Add Job Blocks
+                let hasJobs = false;
                 currentScheduleData.forEach((job, idx) => {
                     const block = job.schedule.find(b => b.day === day);
-                    if (block) {
-                        const startH = parseInt(block.start.split(':')[0]) + parseInt(block.start.split(':')[1]) / 60;
-                        const endH = parseInt(block.end.split(':')[0]) + parseInt(block.end.split(':')[1]) / 60;
+                    // Even if block is flexible/empty, we might want to show it? 
+                    // For now only show if block exists or if it's "Flexible" (Remote)?
+                    // My previous logic assigned [] to Remote.
+                    // If block is undefined (empty schedule), we skip or show "Flexible"?
 
-                        // Normalize 0-24h to 0-100%
-                        const left = ((startH) / 24) * 100;
-                        const width = ((endH - startH) / 24) * 100;
+                    // Logic: If job has schedule, show bar. If flexible, show full width 'Flexible' text?
+                    // Let's stick to showing active blocks for now to avoid clutter, or check if we want to show 'Flexible'
 
-                        const bar = document.createElement('div');
-                        const color = idx % 2 === 0 ? '#3b82f6' : '#10b981';
-                        bar.style.cssText = `position: absolute; left: ${left}%; width: ${width}%; top: 5px; bottom: 5px; background: ${color}; border-radius: 4px; font-size: 10px; color: white; display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; padding: 0 4px; cursor: title;`;
-                        bar.title = `${job.title} (${block.start}-${block.end})`;
-                        bar.textContent = job.title;
-                        timeline.appendChild(bar);
+                    if (block || (job.schedule.length === 0)) { // Show even if flexible? 
+
+                        hasJobs = true;
+                        const row = document.createElement('div');
+                        row.style.cssText = 'display: flex; align-items: center; height: 28px;';
+
+                        // Job Title (Left)
+                        const title = document.createElement('div');
+                        title.textContent = job.title;
+                        title.title = job.title; // Tooltip for full text
+                        title.style.cssText = 'width: 30%; font-size: 0.75rem; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px;';
+                        row.appendChild(title);
+
+                        // Timeline Bar Area (Right)
+                        const track = document.createElement('div');
+                        track.style.cssText = 'width: 70%; height: 100%; position: relative; background: #f8fafc; border-radius: 4px; border: 1px solid #f1f5f9;';
+
+                        // Render Bar
+                        if (block) {
+                            const startH = parseInt(block.start.split(':')[0]) + parseInt(block.start.split(':')[1]) / 60;
+                            const endH = parseInt(block.end.split(':')[0]) + parseInt(block.end.split(':')[1]) / 60;
+                            const left = (startH / 24) * 100;
+                            const width = ((endH - startH) / 24) * 100;
+
+                            const bar = document.createElement('div');
+                            const color = idx % 2 === 0 ? '#3b82f6' : '#10b981';
+                            bar.style.cssText = `position: absolute; left: ${left}%; width: ${width}%; top: 4px; bottom: 4px; background: ${color}; border-radius: 4px; opacity: 0.9; box-shadow: 0 1px 2px rgba(0,0,0,0.1);`;
+                            bar.title = `${block.start} - ${block.end}`; // Tooltip
+                            track.appendChild(bar);
+                        } else {
+                            // Flexible / Remote
+                            const flex = document.createElement('div');
+                            flex.textContent = "Flexible / Remote";
+                            flex.style.cssText = 'width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: #94a3b8; font-style: italic; background: #f1f5f9;';
+                            track.appendChild(flex);
+                        }
+
+                        row.appendChild(track);
+                        content.appendChild(row);
                     }
                 });
 
-                dayRow.appendChild(timeline);
-                container.appendChild(dayRow);
-            });
+                if (!hasJobs) {
+                    const empty = document.createElement('div');
+                    empty.textContent = "No shifts scheduled";
+                    empty.style.cssText = 'font-size: 0.8rem; color: #cbd5e1; text-align: center; padding: 10px;';
+                    content.appendChild(empty);
+                }
 
-            // Legend
-            const legend = document.createElement('div');
-            legend.style.cssText = "margin-top: 10px; font-size: 12px; color: #64748b; text-align: center;";
-            legend.textContent = "Time: 00:00 - 24:00";
-            container.appendChild(legend);
+                dayBlock.appendChild(content);
+                container.appendChild(dayBlock);
+            });
 
         } else {
             jobsPanelContent.innerHTML = `
@@ -306,12 +383,10 @@ function createJobCardPanel(job, number, type) {
                 <div class="job-meta-value" style="color: #10b981;">${weeklyIncome}/week</div>
             </div>
         </div>
-        ${job.apply_link ? `
-        <a href="${job.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button">
-            <i class="fas fa-external-link-alt"></i> Apply Now
+        <a href="${job.apply_link || `https://www.google.com/search?q=${encodeURIComponent(job.title + ' ' + job.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button">
+            <i class="fas fa-external-link-alt"></i> ${job.apply_link ? 'Apply Now' : 'Search to Apply'}
         </a>
-        ` : ''}
-    `;
+        `;
 
     return card;
 }
@@ -325,7 +400,7 @@ function createJobPairCardPanel(pair, number) {
     const totalIncome = pair.total_pay ? `$${pair.total_pay.toFixed(0)}` : 'TBD';
 
     card.innerHTML = `
-        <div class="job-card-header">
+    <div class="job-card-header">
             <div class="job-card-title">Job Pair ${number}</div>
             <span class="job-card-badge pair">COMBO</span>
         </div>
@@ -352,16 +427,12 @@ function createJobPairCardPanel(pair, number) {
         </div>
         
         <div style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            ${jobA.apply_link ? `
-            <a href="${jobA.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
-                <i class="fas fa-link"></i> Job 1
+            <a href="${jobA.apply_link || `https://www.google.com/search?q=${encodeURIComponent(jobA.title + ' ' + jobA.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
+                <i class="fas fa-link"></i> ${jobA.apply_link ? 'Apply Job 1' : 'Search Job 1'}
             </a>
-            ` : ''}
-            ${jobB.apply_link ? `
-            <a href="${jobB.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
-                <i class="fas fa-link"></i> Job 2
+            <a href="${jobB.apply_link || `https://www.google.com/search?q=${encodeURIComponent(jobB.title + ' ' + jobB.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
+                <i class="fas fa-link"></i> ${jobB.apply_link ? 'Apply Job 2' : 'Search Job 2'}
             </a>
-            ` : ''}
         </div>
     `;
 

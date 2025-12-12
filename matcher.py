@@ -18,10 +18,32 @@ def jobs_overlap(job_a: Job, job_b: Job) -> bool:
             if block_a.start < block_b.end and block_a.end > block_b.start:
                 return True
     return False
+    
+def normalize_to_usd(amount: float, currency: str) -> float:
+    """Approximate conversion to USD (fixed rates)"""
+    currency = currency.upper().strip()
+    rates = {
+        "USD": 1.0,
+        "EUR": 1.08,
+        "GBP": 1.27,
+        "AED": 0.27,
+        "RUB": 0.011,
+        "AMD": 0.0025,
+        "AUD": 0.66,
+        "CAD": 0.73
+    }
+    return amount * rates.get(currency, 1.0) # Default 1:1 if unknown
 
 def job_fits_user(job: Job, user: UserProfile) -> Tuple[bool, List[MatchInsight]]:
     insights: List[MatchInsight] = []
-    if job.hourly_rate < user.min_hourly_rate:
+    
+    # Currency-aware rate check
+    job_usd = normalize_to_usd(job.hourly_rate, job.currency)
+    user_min_usd = normalize_to_usd(user.min_hourly_rate, user.currency)
+    
+    
+    # Only filter if user effectively asks for > 0
+    if user_min_usd > 5 and job_usd < user_min_usd:
         return False, insights
 
     if job.hours_per_week > user.max_hours_per_week:
@@ -58,6 +80,11 @@ def job_fits_user(job: Job, user: UserProfile) -> Tuple[bool, List[MatchInsight]
             
             if job.location.lower() in preferred:
                 location_ok = True
+            
+            # Special case: Armenia-based jobs match Armenian cities
+            armenian_cities = {'yerevan', 'gyumri', 'vanadzor', 'dilijan', 'abovyan'}
+            if 'armenia' in job.location.lower() and user.location and user.location.lower() in armenian_cities:
+                location_ok = True
     elif user.remote_ok and is_remote:
         # If we reach here and job is remote, accept it
         location_ok = True
@@ -68,6 +95,7 @@ def job_fits_user(job: Job, user: UserProfile) -> Tuple[bool, List[MatchInsight]
     for block in job.schedule_blocks:
         if conflicts(block, user.busy_map.get(block.day, [])):
             return False, insights
+
 
     insights.append(MatchInsight("Skills", "Skills match or not specified."))
     insights.append(MatchInsight("Schedule", "Fits within free time blocks."))
@@ -95,9 +123,42 @@ class JobMatcher:
             fits, insights = job_fits_user(job, user)
             if fits:
                 eligible.append((job, score_job(job, user), insights))
+        
+        # Sort by score descending
         eligible.sort(key=lambda entry: entry[1], reverse=True)
+        
+        # Diversity Filter: Ensure we don't show only one type of job
+        # Logic: Ensure at least one top result from each search query source is included
+        selected_indices = []
+        seen_sources = set()
+        
+        # First pass: try to pick diverse jobs based on the search query that found them
+        for i, (job, score, insights) in enumerate(eligible):
+            # Use search_query if available, otherwise fallback to title
+            source = job.search_query if job.search_query else job.title.split()[0].lower()
+            
+            # If we haven't seen this "source" yet, pick it
+            if source not in seen_sources:
+                selected_indices.append(i)
+                seen_sources.add(source)
+            
+            if len(selected_indices) >= limit:
+                break
+        
+        # Second pass: fill remaining spots with highest scoring skipped jobs
+        if len(selected_indices) < limit:
+             for i in range(len(eligible)):
+                 if i not in selected_indices:
+                     selected_indices.append(i)
+                 if len(selected_indices) >= limit:
+                     break
+        
+        # Re-sort selected by score to keep best on top
+        final_selection = [eligible[i] for i in selected_indices]
+        final_selection.sort(key=lambda entry: entry[1], reverse=True)
+
         results: List[MatchResult] = []
-        for job, score, insights in eligible[:limit]:
+        for job, score, insights in final_selection:
             results.append(
                 MatchResult(
                     jobs=[job],

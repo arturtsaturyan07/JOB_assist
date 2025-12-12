@@ -51,21 +51,85 @@ class UserContextAgent:
         # 4. Update Profile with new info
         if extraction.extracted:
             print(f"[UserAgent] Extracted new info: {extraction.extracted}")
-            # Merge lists if needed, or overwrite single values
-            self.user_profile.update(extraction.extracted)
-            
-            # Special normalization for skills/role if comma-separated
-            if "skills" in self.user_profile and isinstance(self.user_profile["skills"], str):
-                self.user_profile["skills"] = [s.strip() for s in self.user_profile["skills"].split(",")]
+            # Careful update: Don't overwrite existing data with empty values
+            for k, v in extraction.extracted.items():
+                if v:
+                    if k == "job_role":
+                        if k in self.user_profile:
+                            self.user_profile[k] += f" and {v}"
+                        else:
+                            self.user_profile[k] = v
+                    elif k == "skills":
+                        if not isinstance(v, list):
+                            v = [s.strip() for s in v.split(",") if s.strip()]
+                        if k not in self.user_profile:
+                            self.user_profile[k] = []
+                        self.user_profile[k].extend(v)
+                        self.user_profile[k] = list(set(self.user_profile[k]))  # dedup
+                    else:
+                        self.user_profile[k] = v
         
-        # 5. Check if we are ready to search
+        # 5. Check for Special AI Intents (Interview / Salary)
+        msg_lower = text.lower()
+        
+        # Intent: Salary Prediction
+        if "salary" in msg_lower and ("predict" in msg_lower or "what is" in msg_lower or "estimate" in msg_lower):
+            # Parse role/location quickly (simple heuristic for now)
+            # "Salary for Python Dev in London"
+            role = self.user_profile.get("job_role", "Software Engineer")
+            loc = self.user_profile.get("location", "London")
+            
+            from market_intelligence import SalaryPredictor
+            predictor = SalaryPredictor()
+            prediction = await predictor.predict_salary(role, loc)
+            
+            if "error" not in prediction:
+                curr = prediction.get('currency', 'USD')
+                r = f"💰 **Estimated Salary for {role} in {loc}:**\n"
+                r += f"Range: {prediction.get('min'):,} - {prediction.get('max'):,} {curr}\n"
+                r += f"Median: {prediction.get('median'):,} {curr}\n"
+                r += f"Confidence: {prediction.get('confidence')}"
+                self.chat_history.append({"role": "assistant", "content": r})
+                return r, False # Not ready to search for jobs, just answered a query
+        
+        # Intent: Mock Interview
+        if "interview" in msg_lower and ("me" in msg_lower or "practice" in msg_lower or "mock" in msg_lower):
+            import re
+            # Try to extract role from specific intents: "interview me for [ROLE]"
+            match = re.search(r"interview (?:me )?(?:for |as )?(?:a )?(.+)", msg_lower)
+            if match:
+                # remove common trailing words if user said "interview me for a taxi driver job"
+                role_candidate = match.group(1).replace("job", "").replace("role", "").replace("position", "").strip()
+                if len(role_candidate) > 2:
+                    role = role_candidate.title()
+                else:
+                    role = self.user_profile.get("job_role", "General Role")
+            else:
+                role = self.user_profile.get("job_role", "General Role")
+            
+            # If we recently searched, pick the first job (mock logic)
+            # Ideally, we'd pick a specific job_id, but for now we generalize.
+            
+            from agents.interviewer_agent import InterviewerAgent
+            interviewer = InterviewerAgent()
+            # Pass the SPECIFIC role to the generator
+            questions = await interviewer.generate_questions(role, f"Job Description for {role}")
+            
+            r = f"🎙️ **Mock Interview for {role}**\n\nHere are 3 questions to practice:\n"
+            for i, q in enumerate(questions, 1):
+                r += f"{i}. {q}\n"
+            r += "\nType your answer to one of them, and I'll review it!"
+            self.chat_history.append({"role": "assistant", "content": r})
+            return r, False # Not ready to search for jobs, just initiated an interview
+        
+        # 6. Check if we are ready to search
         # We need at least: (skills OR job_role) AND location
         has_role_or_skills = bool(self.user_profile.get("skills")) or bool(self.user_profile.get("job_role"))
         has_location = bool(self.user_profile.get("location"))
         
         ready_to_search = has_role_or_skills and has_location
         
-        # 6. Generate Response
+        # 7. Generate Response
         response = await self._generate_response(text, ready_to_search)
         
         self.chat_history.append({"role": "assistant", "content": response})
@@ -84,36 +148,60 @@ class UserContextAgent:
         - "skills": List of skills (e.g. ["Math", "Teaching", "Python"])
         - "location": Desired city/country (e.g. "Yerevan", "Remote")
         - "remote_type": "remote", "onsite", "hybrid", or "any"
-        - "min_rate": Minimum hourly rate (number)
+        - "min_rate": Minimum hourly rate (number). If they specify currency (e.g. "20 GBP"), extract it to "currency" field.
+        - "currency": Currency code (USD, GBP, EUR, AED, AMD, RUB). Default to "USD" if unsure but symbol is $.
         - "max_hours": Max hours per week (number)
+        - "busy_schedule": Dictionary of busy times per day. Format: {"Mon": [[start_min, end_min], ...], "Tue": ...}. 
+          "Day off" phrases (e.g., "Wednesday is my day off") -> Full day busy: {"Wed": [[0, 1440]]}.
+          "Mornings only" (wants to work mornings) -> Busy in afternoons/evenings: Every day [[720, 1440]] (12pm-12am busy).
+          "Afternoons only" -> Busy in mornings: Every day [[0, 720]] (12am-12pm busy).
+          "Weekends off" -> Busy Sat/Sun [[0, 1440]].
+          "Weekdays only" -> Same as Weekends off.
         
         Task:
         1. Analyze the user's latest message.
         2. Return a JSON object with ONLY the fields found in the message.
         3. Do NOT invent information. If the user didn't say it, DO NOT include the key.
         4. If input is empty or just a greeting, return {}.
+        5. If user says "no", "none", or declines a preference question, DO NOT return an empty string for that field. Just omit it.
         
-        Example Input: "I am John, looking for python jobs or driver work in London"
-        Example Output: {"name": "John", "job_role": "Python Developer and Driver", "skills": ["Python", "Driving"], "location": "London"}
+        Example Input: "I am John, looking for python jobs or driver work in London, busy on mondays"
+        Example Output: {"name": "John", "job_role": "Python Developer and Driver", "skills": ["Python", "Driving"], "location": "London", "busy_schedule": {"Mon": [[0, 1440]]}}
+        
+        Example Input: "no"  (User responding to 'any company preference?')
+        Example Output: {}
         
         Example Input: "Hi"
         Example Output: {}
         """
 
+        # Call LLM with JSON mode
+        response_text = await self.llm.chat(
+            messages=[{"role": "user", "content": text}],
+            system_instruction=system_prompt,
+            model_preference="gemini",
+            json_mode=True
+        )
+        
+        if not response_text:
+            return ExtractionResult(extracted={})
+            
         try:
-            resp = await self.llm.chat(
-                messages=[{"role": "user", "content": text}],
-                system_instruction=system_prompt,
-                model_preference="gemini",
-                json_mode=True
-            )
+            # 1. Try direct parsing
+            return ExtractionResult(extracted=json.loads(response_text))
+        except json.JSONDecodeError:
+            # 2. Try regex extraction if model added chattiness
+            import re
+            match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if match:
+                try:
+                    return ExtractionResult(extracted=json.loads(match.group(0)))
+                except:
+                    pass
             
-            # Sanitize possible markdown
-            clean_text = resp.replace('```json', '').replace('```', '').strip()
-            if not clean_text: return ExtractionResult({})
-            
-            data = json.loads(clean_text)
-            return ExtractionResult(data)
+            # 3. Fallback
+            print(f"[UserAgent] JSON Parse Error. Raw: {response_text}")
+            return ExtractionResult(extracted={})
             
         except Exception as e:
             print(f"[UserAgent] Extraction error: {e}")

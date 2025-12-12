@@ -45,12 +45,15 @@ class JSearchService:
         # JSearch works best when location is part of the query string for specific regions
         search_query = query.strip()
         
-        if location:
+        # Only append location if it's not already there
+        if location and location.lower() not in search_query.lower():
             search_query += f" in {location}"
         
-        # Add seniority if not present
-        if "senior" not in search_query.lower() and "junior" not in search_query.lower():
-            search_query = f"Senior {search_query}"
+        if location:
+            # Also double check we didn't just add a duplicate
+            pass
+        
+        # Removed auto-Senior injection to improve results for generic roles like "Taxi Driver" or "Junior dev"
         
         params = {
             "query": search_query,
@@ -147,23 +150,42 @@ class JSearchService:
                 if is_remote:
                     location = f"Remote ({location})" if location != "Remote" else "Remote"
                 
-                # Infer schedule
-                schedule_blocks = self._infer_schedule(item.get("job_title", ""))
+                # Infer schedule (Pass location for Remote detection)
+                schedule_blocks = self._infer_schedule(item.get("job_title", ""), location)
                 total_minutes = sum(b.end - b.start for b in schedule_blocks)
-                hours_per_week = total_minutes // 60 if total_minutes > 0 else 40
+                
+                # Special handling for flexible roles: suggest part-time hours to enable pairing
+                if not schedule_blocks:  # Flexible schedule
+                    # For drivers/flexible roles, suggest 25-35h to allow pairing with other jobs
+                    if any(w in job_title.lower() for w in ['driver', 'courier', 'delivery', 'chauffeur']):
+                        hours_per_week = 30  # Part-time driver enables pairing
+                    else:
+                        hours_per_week = 25  # Other flexible roles
+                else:
+                    hours_per_week = total_minutes // 60 if total_minutes > 0 else 40
+                
+                # Extract currency
+                currency = item.get("job_salary_currency", "USD")
+                if not currency and "UK" in location or "London" in location:
+                    currency = "GBP"
+                elif not currency and "Armenia" in location:
+                    currency = "AMD"
+                elif not currency:
+                    currency = "USD"
 
                 job = Job(
                     job_id=str(item.get("job_id", "")),
                     title=item.get("job_title", "Unknown Job"),
                     location=location,
                     hourly_rate=round(hourly_rate, 2),
+                    currency=currency,
                     required_skills=[],  # JSearch doesn't provide structured skills
                     hours_per_week=hours_per_week,
                     schedule_blocks=schedule_blocks,
                     # Additional fields we can add to display
                     company=item.get("employer_name", ""),
                     description=item.get("job_description", "")[:500] if item.get("job_description") else "",
-                    apply_link=item.get("job_apply_link", ""),
+                    apply_link=item.get("job_apply_link") or item.get("job_google_link") or item.get("job_url") or "",
                     posted_date=item.get("job_posted_at_datetime_utc", "")
                 )
                 jobs.append(job)
@@ -174,17 +196,22 @@ class JSearchService:
         
         return jobs
         
-    def _infer_schedule(self, title: str) -> List[TimeBlock]:
+    def _infer_schedule(self, title: str, location: str = "") -> List[TimeBlock]:
         """Infer schedule blocks based on job title keywords"""
         title_lower = title.lower()
+        loc_lower = (location or "").lower()
+        
+        # Remote = Flexible (No fixed blocks, pairs with anything)
+        if "remote" in title_lower or "remote" in loc_lower:
+            return []
+            
+        # Flexible Roles -> No fixed blocks (allows user to work whenever)
+        if any(w in title_lower for w in ['driver', 'taxi', 'courier', 'delivery', 'uber', 'lyft', 'freelance', 'chauffeur', 'van driver', 'owner']):
+            return []
+            
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
         
-        # Keyword-based Rules
-        if any(w in title_lower for w in ['driver', 'taxi', 'courier', 'delivery']):
-            # Evening/Flexible: 18:00 - 23:00
-            return [TimeBlock(day=d, start=1080, end=1380) for d in days]
-            
-        elif any(w in title_lower for w in ['call center', 'support', 'operator', 'agent']):
+        if any(w in title_lower for w in ['call center', 'support', 'operator', 'agent']):
             # Shifts
             if hash(title) % 2 == 0:
                 # Morning: 08:00 - 14:00
@@ -196,7 +223,7 @@ class JSearchService:
         elif "part time" in title_lower or "part-time" in title_lower:
             return [TimeBlock(day=d, start=600, end=840) for d in days]
             
-        # Default: 09:00 - 18:00
+        # Default: 09:00 - 18:00 Mon-Fri
         return [TimeBlock(day=d, start=540, end=1080) for d in days]
 
 
