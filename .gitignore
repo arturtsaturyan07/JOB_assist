@@ -44,6 +44,10 @@ virtualenv/
 *.sublime-workspace
 
 # API Keys and Secrets (NEVER commit these)
+gemini_api_key.txt
+openai_api_key.txt
+rapidapi_key.txt
+azduna_api_key.txt
 *_api_key.txt
 *_key.txt
 .env
