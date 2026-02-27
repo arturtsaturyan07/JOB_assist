@@ -19,9 +19,29 @@ class LLMGateway:
         if self.gemini_key:
             try:
                 genai.configure(api_key=self.gemini_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-                self.gemini_avaliable = True
-                print("[LLMGateway] Gemini initialized ✅")
+                # Try multiple model names in order of preference
+                model_names = [
+                    'gemini-1.5-flash-latest',
+                    'gemini-1.5-pro-latest', 
+                    'gemini-1.5-flash',
+                    'gemini-pro'
+                ]
+                
+                for model_name in model_names:
+                    try:
+                        self.gemini_model = genai.GenerativeModel(model_name)
+                        # Test the model with a simple call
+                        test_response = self.gemini_model.generate_content("Hi")
+                        self.gemini_avaliable = True
+                        print(f"[LLMGateway] Gemini initialized with model: {model_name} ✅")
+                        break
+                    except Exception as model_error:
+                        print(f"[LLMGateway] Model {model_name} failed: {model_error}")
+                        continue
+                
+                if not self.gemini_avaliable:
+                    print("[LLMGateway] All Gemini models failed - will use OpenAI fallback")
+                    
             except Exception as e:
                 print(f"[LLMGateway] Gemini init failed: {e}")
 

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
-from llm_gateway import LLMGateway
+from resilience.resilient_llm_gateway import ResilientLLMGateway
 import json
 
 class ConversationState(str, Enum):
@@ -20,7 +20,7 @@ class UserContextAgent:
     Agent 1: The "Face"
     Responsibility: Talk to user, understand intent, maintain context.
     """
-    def __init__(self, llm_gateway: LLMGateway):
+    def __init__(self, llm_gateway: ResilientLLMGateway):
         self.llm = llm_gateway
         self.user_profile = {}
         self.chat_history = []  # List of {"role": "user"|"assistant", "content": "..."}
@@ -79,18 +79,24 @@ class UserContextAgent:
             role = self.user_profile.get("job_role", "Software Engineer")
             loc = self.user_profile.get("location", "London")
             
-            from market_intelligence import SalaryPredictor
-            predictor = SalaryPredictor()
-            prediction = await predictor.predict_salary(role, loc)
-            
-            if "error" not in prediction:
-                curr = prediction.get('currency', 'USD')
-                r = f"💰 **Estimated Salary for {role} in {loc}:**\n"
-                r += f"Range: {prediction.get('min'):,} - {prediction.get('max'):,} {curr}\n"
-                r += f"Median: {prediction.get('median'):,} {curr}\n"
-                r += f"Confidence: {prediction.get('confidence')}"
+            try:
+                from market_intelligence import SalaryPredictor
+                predictor = SalaryPredictor()
+                prediction = await predictor.predict_salary(role, loc)
+                
+                if "error" not in prediction:
+                    curr = prediction.get('currency', 'USD')
+                    r = f"💰 **Estimated Salary for {role} in {loc}:**\n"
+                    r += f"Range: {prediction.get('min'):,} - {prediction.get('max'):,} {curr}\n"
+                    r += f"Median: {prediction.get('median'):,} {curr}\n"
+                    r += f"Confidence: {prediction.get('confidence')}"
+                    self.chat_history.append({"role": "assistant", "content": r})
+                    return r, False # Not ready to search for jobs, just answered a query
+            except Exception as e:
+                print(f"[UserAgent] Salary prediction failed: {type(e).__name__}: {e}")
+                r = "I'm having trouble accessing salary data right now. Please try again in a few minutes, or let's continue with your job search."
                 self.chat_history.append({"role": "assistant", "content": r})
-                return r, False # Not ready to search for jobs, just answered a query
+                return r, False
         
         # Intent: Mock Interview
         if "interview" in msg_lower and ("me" in msg_lower or "practice" in msg_lower or "mock" in msg_lower):
@@ -110,17 +116,23 @@ class UserContextAgent:
             # If we recently searched, pick the first job (mock logic)
             # Ideally, we'd pick a specific job_id, but for now we generalize.
             
-            from agents.interviewer_agent import InterviewerAgent
-            interviewer = InterviewerAgent()
-            # Pass the SPECIFIC role to the generator
-            questions = await interviewer.generate_questions(role, f"Job Description for {role}")
-            
-            r = f"🎙️ **Mock Interview for {role}**\n\nHere are 3 questions to practice:\n"
-            for i, q in enumerate(questions, 1):
-                r += f"{i}. {q}\n"
-            r += "\nType your answer to one of them, and I'll review it!"
-            self.chat_history.append({"role": "assistant", "content": r})
-            return r, False # Not ready to search for jobs, just initiated an interview
+            try:
+                from agents.interviewer_agent import InterviewerAgent
+                interviewer = InterviewerAgent()
+                # Pass the SPECIFIC role to the generator
+                questions = await interviewer.generate_questions(role, f"Job Description for {role}")
+                
+                r = f"🎙️ **Mock Interview for {role}**\n\nHere are 3 questions to practice:\n"
+                for i, q in enumerate(questions, 1):
+                    r += f"{i}. {q}\n"
+                r += "\nType your answer to one of them, and I'll review it!"
+                self.chat_history.append({"role": "assistant", "content": r})
+                return r, False # Not ready to search for jobs, just initiated an interview
+            except Exception as e:
+                print(f"[UserAgent] Mock interview generation failed: {type(e).__name__}: {e}")
+                r = "I'm having trouble generating interview questions right now. The AI service might be temporarily unavailable. Let's continue with your job search instead!"
+                self.chat_history.append({"role": "assistant", "content": r})
+                return r, False
         
         # 6. Check if we are ready to search
         # We need at least: (skills OR job_role) AND location
@@ -176,36 +188,116 @@ class UserContextAgent:
         """
 
         # Call LLM with JSON mode
-        response_text = await self.llm.chat(
-            messages=[{"role": "user", "content": text}],
-            system_instruction=system_prompt,
-            model_preference="gemini",
-            json_mode=True
-        )
+        try:
+            response_text = await self.llm.chat(
+                messages=[{"role": "user", "content": text}],
+                system_instruction=system_prompt,
+                model_preference="gemini",
+                json_mode=True
+            )
+        except Exception as e:
+            # LLM service unavailable - use fallback extraction
+            print(f"[UserAgent] LLM unavailable for extraction: {type(e).__name__}: {e}")
+            return self._fallback_extraction(text)
         
         if not response_text:
-            return ExtractionResult(extracted={})
+            return self._fallback_extraction(text)
             
         try:
             # 1. Try direct parsing
-            return ExtractionResult(extracted=json.loads(response_text))
+            extracted = json.loads(response_text)
+            # If extraction is empty or incomplete, enhance with fallback
+            if not extracted or all(not v for v in extracted.values()):
+                return self._fallback_extraction(text)
+            
+            # If LLM extraction is partial, enhance it with fallback
+            # This handles cases where LLM might miss location or job_role
+            if not extracted.get("location") or not extracted.get("job_role"):
+                fallback = self._fallback_extraction(text)
+                # Merge fallback data (only add missing fields)
+                for key, value in fallback.extracted.items():
+                    if key not in extracted or not extracted[key]:
+                        extracted[key] = value
+                        print(f"[UserAgent] Enhanced LLM extraction with fallback: {key}={value}")
+            
+            return ExtractionResult(extracted=extracted)
         except json.JSONDecodeError:
             # 2. Try regex extraction if model added chattiness
             import re
             match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if match:
                 try:
-                    return ExtractionResult(extracted=json.loads(match.group(0)))
+                    extracted = json.loads(match.group(0))
+                    if extracted and any(v for v in extracted.values()):
+                        return ExtractionResult(extracted=extracted)
                 except:
                     pass
             
-            # 3. Fallback
+            # 3. Fallback to regex extraction
             print(f"[UserAgent] JSON Parse Error. Raw: {response_text}")
-            return ExtractionResult(extracted={})
+            return self._fallback_extraction(text)
             
         except Exception as e:
             print(f"[UserAgent] Extraction error: {e}")
-            return ExtractionResult({})
+            return self._fallback_extraction(text)
+    
+    def _fallback_extraction(self, text: str) -> ExtractionResult:
+        """
+        Fallback extraction using regex patterns when LLM is unavailable.
+        """
+        import re
+        text_lower = text.lower()
+        extracted = {}
+        
+        # Common job roles
+        job_roles = [
+            'call center', 'customer service', 'support', 'developer', 'engineer', 'programmer',
+            'designer', 'teacher', 'driver', 'taxi driver', 'nurse', 'doctor', 'manager',
+            'accountant', 'sales', 'marketing', 'analyst', 'consultant', 'chef', 'cook',
+            'waiter', 'bartender', 'cleaner', 'security', 'receptionist', 'assistant'
+        ]
+        
+        # Common locations
+        locations = [
+            'berlin', 'london', 'paris', 'yerevan', 'moscow', 'dubai', 'new york',
+            'remote', 'armenia', 'germany', 'uk', 'usa', 'france', 'russia'
+        ]
+        
+        # Extract job role
+        for role in job_roles:
+            if role in text_lower:
+                extracted['job_role'] = role.title()
+                break
+        
+        # Extract location
+        for loc in locations:
+            if loc in text_lower:
+                extracted['location'] = loc.title()
+                break
+        
+        # Extract name patterns
+        name_patterns = [
+            r"i\s+am\s+(\w+)",
+            r"i'm\s+(\w+)",
+            r"my\s+name\s+is\s+(\w+)",
+            r"call\s+me\s+(\w+)"
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                name = match.group(1).capitalize()
+                if len(name) >= 2:
+                    extracted['name'] = name
+                    break
+        
+        # Extract remote preference
+        if 'remote' in text_lower:
+            extracted['remote_type'] = 'remote'
+        elif 'office' in text_lower or 'onsite' in text_lower:
+            extracted['remote_type'] = 'onsite'
+        
+        print(f"[UserAgent] Fallback extraction: {extracted}")
+        return ExtractionResult(extracted=extracted)
 
     async def _generate_response(self, user_text: str, ready_to_search: bool) -> str:
         """
@@ -239,12 +331,24 @@ class UserContextAgent:
         
         full_messages = recent_history + [{"role": "user", "content": f"[System Note: {state_context}]\n[Instruction: {task_prompt}]"}]
         
-        resp = await self.llm.chat(
-            messages=full_messages, 
-            system_instruction=persona, 
-            model_preference="openai"
-        )
-        return resp
+        try:
+            resp = await self.llm.chat(
+                messages=full_messages, 
+                system_instruction=persona, 
+                model_preference="openai"
+            )
+            return resp
+        except Exception as e:
+            # LLM service unavailable - provide user-friendly fallback message
+            print(f"[UserAgent] LLM unavailable for response generation: {type(e).__name__}: {e}")
+            
+            # Generate a simple fallback response based on what we need
+            if missing:
+                return f"I'd like to help you find jobs, but I need to know: {', '.join(missing)}. Could you share that with me?"
+            elif ready_to_search:
+                return "Great! I have all the information I need. Let me search for matching jobs now."
+            else:
+                return "I'm having trouble connecting to the AI service right now, but I'm still here to help. What would you like to tell me?"
 
     def _detect_language(self, text: str) -> str:
         armenian_chars = sum(1 for c in text if '\u0530' <= c <= '\u0588')

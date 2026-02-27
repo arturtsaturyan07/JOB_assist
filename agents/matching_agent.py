@@ -22,6 +22,7 @@ class MatchingAgent:
         """
         Analyze jobs against user profile.
         Returns dictionary with 'single' and 'pair' matches.
+        Shows all available jobs, even loosely similar ones.
         """
         if not jobs:
             return {"single": [], "pairs": [], "schedule": []}
@@ -31,16 +32,16 @@ class MatchingAgent:
         
         matcher = LegacyMatcher(jobs)
         
-        # 1. Single Matches
-        single_matches = matcher.match_single_jobs(profile, limit=10)
+        # 1. Single Matches - show all jobs
+        single_matches = matcher.match_single_jobs(profile, limit=200)  # Increased from 100 to 200
         
         # 2. Pair Matches (TwinWork capability)
-        pair_matches = matcher.match_job_pairs(profile, limit=3)
+        pair_matches = matcher.match_job_pairs(profile, limit=50)  # Increased from 10 to 50
         
         return {
             "single": single_matches,
             "pairs": pair_matches,
-            "raw_top_jobs": [m.jobs[0] for m in single_matches] if single_matches else jobs[:5]
+            "raw_top_jobs": jobs  # Show all jobs
         }
 
     def _create_profile(self, data: dict) -> UserProfile:

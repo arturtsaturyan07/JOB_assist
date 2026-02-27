@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-from llm_gateway import LLMGateway
+from resilience.resilient_llm_gateway import ResilientLLMGateway
 import json
 
 class InterviewerAgent:
@@ -7,7 +7,7 @@ class InterviewerAgent:
     Agent for conducting mock interviews based on job descriptions.
     """
     def __init__(self):
-        self.llm = LLMGateway()
+        self.llm = ResilientLLMGateway()
 
     async def generate_questions(self, job_title: str, job_description: str) -> List[str]:
         """Generate 3 technical/behavioral questions for the role."""

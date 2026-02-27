@@ -124,7 +124,7 @@ class ArmenianJobScraper:
         self, 
         query: str, 
         location: str = "Yerevan",
-        max_per_source: int = 10
+        max_per_source: int = 50  # Increased from 10 to 50
     ) -> List[Job]:
         """
         Search all Armenian job sites in parallel.
@@ -169,7 +169,7 @@ class ArmenianJobScraper:
         self, 
         query: str, 
         location: str = "",
-        limit: int = 10
+        limit: int = 50  # Increased from 10 to 50
     ) -> List[Job]:
         """
         Search staff.am for jobs.
@@ -301,7 +301,7 @@ class ArmenianJobScraper:
         self, 
         query: str, 
         location: str = "",
-        limit: int = 10
+        limit: int = 50  # Increased from 10 to 50
     ) -> List[Job]:
         """
         Search job.am for jobs.
@@ -368,12 +368,13 @@ class ArmenianJobScraper:
     async def search_list_am(
         self, 
         query: str,
-        limit: int = 10
+        limit: int = 50  # Increased from 10 to 50
     ) -> List[Job]:
         """
-        Search list.am jobs section.
+        Search list.am jobs section with anti-detection measures.
         
         list.am is a classifieds site with a jobs section.
+        Uses realistic headers and delays to avoid 403 blocking.
         """
         source = "list.am"
         cache_key = self._get_cache_key(source, query)
@@ -385,52 +386,89 @@ class ArmenianJobScraper:
         
         await self._rate_limit(source)
         
-        # list.am jobs search
-        # list.am jobs search
-        # Using simplified path which often works better with antibot
-        search_url = f"https://www.list.am/en/category/91?q={quote_plus(query)}"
+        # Enhanced headers to avoid 403 blocking
+        enhanced_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
+        }
         
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(search_url, headers=self.HEADERS)
-                response.raise_for_status()
+        # Try multiple search paths
+        search_urls = [
+            f"https://www.list.am/en/category/91?q={quote_plus(query)}",
+            f"https://www.list.am/en/item/search?q={quote_plus(query)}&c=91",
+            f"https://www.list.am/en/search?q={quote_plus(query)}&c=91",
+        ]
+        
+        for search_url in search_urls:
+            try:
+                # Add delay to appear human-like
+                await asyncio.sleep(1)
                 
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                scraped = []
-                listings = soup.select('.gl, .list-item, [class*="listing"]')[:limit]
-                
-                for listing in listings:
-                    try:
-                        title_elem = listing.select_one('.title, a')
-                        link_elem = listing.select_one('a[href]')
-                        
-                        if title_elem:
-                            scraped.append(ScrapedJob(
-                                title=title_elem.get_text(strip=True),
-                                company="",  # list.am often doesn't show company
-                                location="Armenia",
-                                url=urljoin("https://www.list.am", link_elem['href']) if link_elem else "",
-                                source="list.am",
-                                description=""
-                            ))
-                    except Exception:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    response = await client.get(search_url, headers=enhanced_headers)
+                    
+                    # If we get 403, try next URL
+                    if response.status_code == 403:
+                        print(f"[WARN] list.am returned 403 for {search_url}, trying alternative...")
                         continue
-                
-                jobs = await self._normalize_jobs(scraped)
-                
-                # Cache
-                self.cache[cache_key] = {
-                    'timestamp': datetime.now().isoformat(),
-                    'jobs': [self._job_to_cache_dict(j) for j in jobs]
-                }
-                self._save_cache()
-                
-                return jobs
-                
-        except Exception as e:
-            print(f"[ERROR] list.am error: {e}")
-            return []
+                    
+                    response.raise_for_status()
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    scraped = []
+                    # Try multiple selectors for job listings
+                    listings = soup.select('.gl, .list-item, [class*="listing"], .item, .job-item')[:limit]
+                    
+                    if not listings:
+                        # Try alternative selectors
+                        listings = soup.select('div[class*="item"]')[:limit]
+                    
+                    for listing in listings:
+                        try:
+                            title_elem = listing.select_one('.title, a, h2, h3')
+                            link_elem = listing.select_one('a[href]')
+                            
+                            if title_elem and title_elem.get_text(strip=True):
+                                scraped.append(ScrapedJob(
+                                    title=title_elem.get_text(strip=True),
+                                    company="",  # list.am often doesn't show company
+                                    location="Armenia",
+                                    url=urljoin("https://www.list.am", link_elem['href']) if link_elem else "",
+                                    source="list.am",
+                                    description=""
+                                ))
+                        except Exception:
+                            continue
+                    
+                    if scraped:
+                        jobs = await self._normalize_jobs(scraped)
+                        
+                        # Cache
+                        self.cache[cache_key] = {
+                            'timestamp': datetime.now().isoformat(),
+                            'jobs': [self._job_to_cache_dict(j) for j in jobs]
+                        }
+                        self._save_cache()
+                        
+                        print(f"[OK] list.am: {len(jobs)} jobs found")
+                        return jobs
+                    
+            except Exception as e:
+                print(f"[WARN] list.am error with {search_url}: {e}")
+                continue
+        
+        print(f"[ERROR] list.am: Could not fetch jobs (all URLs failed)")
+        return []
     
     async def parse_manual_job(self, job_text: str) -> Job:
         """

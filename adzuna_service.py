@@ -39,8 +39,11 @@ class AdzunaService:
                 data = response.json()
                 
                 return self._parse_jobs(data.get("results", []))
+            except httpx.HTTPStatusError as e:
+                print(f"Adzuna API HTTP Error: {e.response.status_code} - {e.response.text}")
+                return []
             except Exception as e:
-                print(f"Adzuna API Error: {e}")
+                print(f"Adzuna API Error: {type(e).__name__}: {e}")
                 return []
 
     def _parse_jobs(self, results: List[Dict[str, Any]]) -> List[Job]:
@@ -71,11 +74,15 @@ class AdzunaService:
                 job = Job(
                     job_id=str(item.get("id")),
                     title=item.get("title", "Unknown Job"),
+                    company=item.get("company", {}).get("display_name", "") if isinstance(item.get("company"), dict) else "",
                     location=item.get("location", {}).get("display_name", "Unknown Location"),
                     hourly_rate=round(hourly_rate, 2),
                     required_skills=[], # Adzuna doesn't provide structured skills
                     hours_per_week=40, # Default
-                    schedule_blocks=[] # Default empty, or we could generate random ones for the demo
+                    schedule_blocks=[], # Default empty, or we could generate random ones for the demo
+                    apply_link=item.get("redirect_url", ""),  # Adzuna provides redirect_url for applications
+                    description=item.get("description", ""),
+                    job_source="adzuna"
                 )
                 jobs.append(job)
             except Exception as e:

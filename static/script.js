@@ -4,80 +4,10 @@ const sendBtn = document.getElementById('send-btn');
 const optionsContainer = document.getElementById('options-container');
 const jobsPanelContent = document.getElementById('jobs-panel-content');
 
-// Connect to WebSocket with Auto-Reconnect
-let ws;
+// Connect to WebSocket
 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
-
-function connectWebSocket() {
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-        console.log('Connected to chat server');
-        const statusMsg = document.getElementById('connection-status');
-        if (statusMsg) statusMsg.remove();
-
-        // Enable input
-        messageInput.disabled = false;
-        messageInput.placeholder = "Type your answer...";
-        document.getElementById('send-btn').disabled = false;
-    };
-
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message received:', data);
-
-        // Handle CV Analysis results
-        if (data.type === 'cv_analysis') {
-            // Processing logic
-        }
-
-        if (data.type === 'text' || data.type === 'choice') {
-            addMessage(data.message, 'bot');
-            if (data.options && data.options.length > 0) {
-                showOptions(data.options);
-            } else {
-                optionsContainer.innerHTML = '';
-            }
-        }
-
-        // Handle job data
-        if (data.type === 'jobs' || (data.single_jobs && data.single_jobs.length > 0)) {
-            console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
-            currentSingleJobs = data.single_jobs || [];
-            currentPairJobs = data.pair_jobs || [];
-            currentScheduleData = data.schedule_data || [];
-            displayJobsInPanel();
-        }
-    };
-
-    ws.onclose = () => {
-        console.log('Connection lost. Reconnecting in 3s...');
-
-        // Disable input
-        messageInput.disabled = true;
-        messageInput.placeholder = "Connecting to server...";
-        document.getElementById('send-btn').disabled = true;
-
-        // Show non-intrusive status
-        if (!document.getElementById('connection-status')) {
-            const status = document.createElement('div');
-            status.id = 'connection-status';
-            status.style.cssText = 'position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #ef4444; color: white; padding: 5px 15px; border-radius: 20px; font-size: 0.8rem; z-index: 1000;';
-            status.textContent = 'Connection lost. Reconnecting...';
-            document.body.appendChild(status);
-        }
-        setTimeout(connectWebSocket, 3000);
-    };
-
-    ws.onerror = (err) => {
-        console.error('WebSocket encountered error: ', err);
-        ws.close();
-    };
-}
-
-// Initial connection
-connectWebSocket();
+const ws = new WebSocket(wsUrl);
 
 // Global state for jobs to support filtering
 let currentSingleJobs = [];
@@ -85,7 +15,45 @@ let currentPairJobs = [];
 let currentScheduleData = [];
 let currentTab = 'single';
 
+ws.onopen = () => {
+    console.log('Connected to chat server');
+};
 
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    console.log('WebSocket message received:', data);
+
+    // Handle CV Analysis results specifically
+    if (data.type === 'cv_analysis') {
+        const skills = data.skills.join(', ');
+        // We handle the text message part separately, this just updates internal state if needed
+        // But mainly the server sends a text message after this JSON
+    }
+
+    if (data.type === 'text' || data.type === 'choice') {
+        addMessage(data.message, 'bot');
+
+        if (data.options && data.options.length > 0) {
+            showOptions(data.options);
+        } else {
+            optionsContainer.innerHTML = ''; // Clear options if none
+        }
+    }
+
+    // Handle job data in side panel
+    if (data.type === 'jobs' || (data.single_jobs && data.single_jobs.length > 0)) {
+        console.log('Displaying jobs in panel:', data.single_jobs, data.pair_jobs);
+        currentSingleJobs = data.single_jobs || [];
+        currentPairJobs = data.pair_jobs || [];
+        currentScheduleData = data.schedule_data || [];
+        displayJobsInPanel(); // Refresh display with new data
+    }
+};
+
+ws.onclose = () => {
+    addMessage('Connection lost. Please refresh the page.', 'bot');
+};
 
 // --- UI Toggle Functions ---
 
@@ -383,10 +351,12 @@ function createJobCardPanel(job, number, type) {
                 <div class="job-meta-value" style="color: #10b981;">${weeklyIncome}/week</div>
             </div>
         </div>
-        <a href="${job.apply_link || `https://www.google.com/search?q=${encodeURIComponent(job.title + ' ' + job.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button">
-            <i class="fas fa-external-link-alt"></i> ${job.apply_link ? 'Apply Now' : 'Search to Apply'}
+        ${job.apply_link ? `
+        <a href="${job.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button">
+            <i class="fas fa-external-link-alt"></i> Apply Now
         </a>
-        `;
+        ` : ''}
+    `;
 
     return card;
 }
@@ -400,7 +370,7 @@ function createJobPairCardPanel(pair, number) {
     const totalIncome = pair.total_pay ? `$${pair.total_pay.toFixed(0)}` : 'TBD';
 
     card.innerHTML = `
-    <div class="job-card-header">
+        <div class="job-card-header">
             <div class="job-card-title">Job Pair ${number}</div>
             <span class="job-card-badge pair">COMBO</span>
         </div>
@@ -427,12 +397,16 @@ function createJobPairCardPanel(pair, number) {
         </div>
         
         <div style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            <a href="${jobA.apply_link || `https://www.google.com/search?q=${encodeURIComponent(jobA.title + ' ' + jobA.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
-                <i class="fas fa-link"></i> ${jobA.apply_link ? 'Apply Job 1' : 'Search Job 1'}
+            ${jobA.apply_link ? `
+            <a href="${jobA.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
+                <i class="fas fa-link"></i> Job 1
             </a>
-            <a href="${jobB.apply_link || `https://www.google.com/search?q=${encodeURIComponent(jobB.title + ' ' + jobB.company + ' apply')}`}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
-                <i class="fas fa-link"></i> ${jobB.apply_link ? 'Apply Job 2' : 'Search Job 2'}
+            ` : ''}
+            ${jobB.apply_link ? `
+            <a href="${jobB.apply_link}" target="_blank" rel="noopener noreferrer" class="job-card-button" style="font-size: 0.85rem; padding: 8px;">
+                <i class="fas fa-link"></i> Job 2
             </a>
+            ` : ''}
         </div>
     `;
 

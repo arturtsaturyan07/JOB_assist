@@ -1,128 +1,112 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# # Python
+# __pycache__/
+# *.py[cod]
+# *$py.class
+# *.so
+# .Python
+# build/
+# develop-eggs/
+# dist/
+# downloads/
+# eggs/
+# .eggs/
+# lib/
+# lib64/
+# parts/
+# sdist/
+# var/
+# wheels/
+# pip-wheel-metadata/
+# share/python-wheels/
+# *.egg-info/
+# .installed.cfg
+# *.egg
+# MANIFEST
 
-# Virtual environments
-venv/
-ENV/
-env/
-.venv
-virtualenv/
+# # Virtual environments
+# venv/
+# ENV/
+# env/
+# .venv
+# virtualenv/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-.project
-.pydevproject
-.settings/
-*.sublime-project
-*.sublime-workspace
+# # IDE
+# .vscode/
+# .idea/
+# *.swp
+# *.swo
+# *~
+# .DS_Store
+# .project
+# .pydevproject
+# .settings/
+# *.sublime-project
+# *.sublime-workspace
 
-# API Keys and Secrets (NEVER commit these)
-gemini_api_key.txt
-openai_api_key.txt
-rapidapi_key.txt
-azduna_api_key.txt
-*_api_key.txt
-*_key.txt
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-secrets.json
+# # API Keys and Secrets (NEVER commit these)
+# *_api_key.txt
+# *_key.txt
+# .env
+# .env.local
+# .env.*.local
+# *.key
+# *.pem
+# secrets.json
 
-# Testing and Debug Files
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-test_*.py
-verify_*.py
-debug_*.py
-check_*.py
-repro_*.py
-comprehensive_*.py
-fetch_*.py
-final_*.py
-deep_*.py
+# # Testing
+# .pytest_cache/
+# .coverage
+# htmlcov/
+# .tox/
+# test_*.py
+# verify_*.py
+# debug_*.py
 
-# Logs
-*.log
-*.txt
-!requirements.txt
-!README.txt
-logs/
-log_*.txt
-debug_output.txt
-scraper_*.txt
+# # Logs
+# *.log
+# logs/
 
-# Cache
-.cache/
-*.cache
-job_cache.json
-*.tmp
+# # Cache
+# .cache/
+# *.cache
+# job_cache.json
+# *.tmp
 
-# OS
-Thumbs.db
-.DS_Store
-desktop.ini
+# # OS
+# Thumbs.db
+# .DS_Store
+# desktop.ini
 
-# Node modules (if using npm/webpack)
-node_modules/
-package-lock.json
-yarn.lock
+# # Node modules (if using npm/webpack)
+# node_modules/
+# package-lock.json
+# yarn.lock
 
-# Build and Distribution
-dist/
-build/
-*.egg-info/
+# # Build and Distribution
+# dist/
+# build/
+# *.egg-info/
 
-# Temporary files
-*.tmp
-*.bak
-*.swp
-*~
-.#*
+# # Temporary files
+# *.tmp
+# *.bak
+# *.swp
+# *~
+# .#*
 
-# IDE temp files
-.vscode/.settings
-.vscode/launch.json
-.vscode/settings.json
+# # IDE temp files
+# .vscode/.settings
+# .vscode/launch.json
+# .vscode/settings.json
 
-# MacOS
-.AppleDouble
-.LSOverride
-._*
+# # MacOS
+# .AppleDouble
+# .LSOverride
+# ._*
 
-# Windows
-.Thumbs.db
+# # Windows
+# .Thumbs.db
 
-# LocalStack
-.localstack/
-local_variables.env
+# # LocalStack
+# .localstack/
+# local_variables.env

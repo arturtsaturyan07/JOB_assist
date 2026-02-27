@@ -1,0 +1,4 @@
+# Get your free USAJobs API key at:
+# https://developer.usajobs.gov/APIRequest/Index
+# 
+# Paste your API key below (remove this comment):
