@@ -1,4 +1,0 @@
-# Your email address for USAJobs API
-# (same email you used to register for the API key)
-# 
-# Paste your email below (remove this comment):
